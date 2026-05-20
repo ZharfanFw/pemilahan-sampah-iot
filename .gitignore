@@ -49,8 +49,5 @@ Thumbs.db
 # Vite
 .vite/
 
-# Environment files
-.env.example
-
 # Temporary files
 *.

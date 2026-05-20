@@ -1,0 +1,6 @@
+# Environment files
+node_modules/
+.env
+smart-waste-iot-firebase-adminsdk.json
+*.log
+.DS_Store
