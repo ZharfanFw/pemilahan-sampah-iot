@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import RiwayatSampah from './pages/RiwayatSampah';
 import './index.css';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -16,8 +17,8 @@ function App() {
         {/* Login */}
         <Route path="/login" element={<Login />} /> 
         
-        {/* Protected Route */}
-        {/* Dashboard */}
+        {/* Protected Routes */}
+        {/* Dashboard Route */}
         <Route 
           path="/dashboard" 
           element={
@@ -26,6 +27,16 @@ function App() {
             </ProtectedRoute>
           } 
         />
+        {/* Riwayat Sampah Route*/}
+        <Route 
+          path="/riwayat" 
+          element={
+            <ProtectedRoute>
+              <RiwayatSampah />
+            </ProtectedRoute>
+          } 
+        />
+
       </Routes>
     </Router>
   );
