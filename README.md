@@ -5,6 +5,7 @@ cd client
 ### Install
 - npm install react-router-dom jwt-decode
 - npm install -D tailwindcss postcss autoprefixer
+- npm install chart.js react-chartjs-2
 
 ### Run Dev Client
 - npm run dev

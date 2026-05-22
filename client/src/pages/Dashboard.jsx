@@ -1,6 +1,25 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { logoutService } from '../services/authService';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+import { Bar } from 'react-chartjs-2';
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend
+);
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -9,6 +28,43 @@ export default function Dashboard() {
   const handleLogout = () => {
     logoutService();
     navigate('/login');
+  };
+
+  const chartData = {
+    labels: ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'],
+    datasets: [
+      {
+        label: 'Organik',
+        data: [12, 19, 15, 22, 14, 28, 30],
+        backgroundColor: 'rgba(34, 197, 94, 0.8)',
+        borderRadius: 4,
+      },
+      {
+        label: 'Anorganik',
+        data: [8, 11, 13, 18, 10, 20, 25],
+        backgroundColor: 'rgba(59, 130, 246, 0.8)',
+        borderRadius: 4,
+      },
+    ],
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'top',
+      },
+    },
+    scales: {
+      y: {
+        beginAtZero: true,
+        title: {
+          display: true,
+          text: 'Jumlah Sampah (Item)'
+        }
+      }
+    }
   };
 
   return (
@@ -76,8 +132,9 @@ export default function Dashboard() {
           {/* Grafik Chart*/}
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
             <h3 className="text-lg font-bold text-gray-800 mb-4">Grafik Historis Klasifikasi Sampah</h3>
-            <div className="w-full h-64 bg-gray-50 border border-dashed border-gray-300 rounded-lg flex items-center justify-center text-gray-400">
-              [ Nanti Grafik Chart.js ditaruh di sini ]
+            {/* Container untuk grafik, h-72 memastikan tingginya pas dan tidak melebar/mengecil sembarangan */}
+            <div className="w-full h-72 relative">
+              <Bar data={chartData} options={chartOptions} />
             </div>
           </div>
         </section>
