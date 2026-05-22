@@ -15,7 +15,6 @@ export const loginService = async (username, password) => {
     throw new Error(data.message || "Gagal melakukan login");
   }
 
-  // Jika sukses, simpan token & info user ke localStorage
   if (data.token) {
     localStorage.setItem("token", data.token);
     localStorage.setItem("user", JSON.stringify(data.user));

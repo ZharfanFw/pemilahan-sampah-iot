@@ -1,20 +1,23 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard'; // Buat file dummy dulu untuk halaman ini
+import Dashboard from './pages/Dashboard';
+import './index.css';
 import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
   return (
     <Router>
       <Routes>
-        {/* Jalur Default langsung diarahkan ke login atau dashboard */}
+        {/* Default Route*/}
         <Route path="/" element={<Navigate to="/login" replace />} />
         
-        {/* Jalur Public */}
-        <Route path="/login" element={<Login />} />
+        {/* Public Route */}
+        {/* Login */}
+        <Route path="/login" element={<Login />} /> 
         
-        {/* Jalur Private (Diproteksi) */}
+        {/* Protected Route */}
+        {/* Dashboard */}
         <Route 
           path="/dashboard" 
           element={

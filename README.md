@@ -4,6 +4,7 @@
 cd client
 ### Install
 - npm install react-router-dom jwt-decode
+- npm install -D tailwindcss postcss autoprefixer
 
 ### Run Dev Client
 - npm run dev

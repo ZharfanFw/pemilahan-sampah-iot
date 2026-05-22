@@ -16,7 +16,6 @@ export default function Login() {
 
     try {
       await loginService(username, password);
-      // Jika berhasil, arahkan langsung ke halaman dashboard
       navigate('/dashboard');
     } catch (err) {
       setError(err.message);
