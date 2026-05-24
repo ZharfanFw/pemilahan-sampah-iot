@@ -67,3 +67,11 @@ model/*.json
 
 # Firebase credentials (sensitive)
 *firebase-adminsdk*.json
+
+# Python Virtual Environment
+model/venv/
+venv/
+.venv/
+env/
+.env/
+
