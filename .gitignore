@@ -51,3 +51,19 @@ Thumbs.db
 
 # Temporary files
 *.
+
+# ML Model - Training artifacts (large files, not needed in repo)
+model/dataset/
+model/*.h5
+model/saved_model/
+model/__pycache__/
+model/*.png
+model/*.txt
+model/*.json
+!model/requirements.txt
+
+# ML Model - Keep TFJS converted model for server deployment
+# server/ml-model/ ← this IS committed to repo
+
+# Firebase credentials (sensitive)
+*firebase-adminsdk*.json
