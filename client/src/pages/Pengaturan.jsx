@@ -11,6 +11,7 @@ export default function Pengaturan() {
   const [serverOnline, setServerOnline] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  
 
   // State kalibrasi sensor
   const [config, setConfig] = useState({
