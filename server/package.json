@@ -13,16 +13,20 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@tensorflow/tfjs-node": "^4.22.0",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-backend-cpu": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
     "firebase-admin": "^13.10.0",
+    "jpeg-js": "^0.4.4",
     "jsonwebtoken": "^9.0.3",
     "jwt-decode": "^4.0.0",
-    "mqtt": "^5.15.1"
+    "mqtt": "^5.15.1",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
