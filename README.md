@@ -231,8 +231,10 @@ Berikut adalah koneksi kabel antara ESP32-CAM dengan sensor serta aktuator fisik
 ## 📜 Lisensi & Kontributor
 
 Proyek riset ini dirancang, diuji, dan dikembangkan oleh:
-- **Rizki Maulana** - Universitas Pendidikan Indonesia
-- **Alun Sujjada** - Universitas Nusa Putra
-- **Anggun Fergina** - Universitas Nusa Putra
+- **Arya** - Universitas Pendidikan Indonesia
+- **Alan** - Universitas Pendidikan Indonesia
+- **Maul** - Universitas Pendidikan Indonesia
+- **Muhiban** - Universitas Pendidikan Indonesia
+- **Zharfan** - Universitas Pendidikan Indonesia
 
 Dilisensikan di bawah lisensi internasional [Creative Commons Attribution-ShareAlike 4.0 (CC BY-SA 4.0)](https://creativecommons.org/licenses/by-sa/4.0/). Anda dipersilakan menyebarluaskan, memodifikasi, dan membangun kembali proyek ini dengan tetap mencantumkan kredit atribusi penulis asli.
