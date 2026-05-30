@@ -12,7 +12,6 @@ const tf = require("@tensorflow/tfjs");
 const wasm = require("@tensorflow/tfjs-backend-wasm");
 const jpeg = require("jpeg-js");
 const path = require("path");
-const fs = require("fs");
 const logger = require("../utils/logger");
 
 // Set local WASM binary file paths for completely offline high-performance execution
@@ -72,24 +71,13 @@ function graphFileLoader(jsonPath) {
 
 class ClassificationService {
   constructor() {
-    this.model = null;
+    this.worker = null;
     this.isReady = false;
     this.isFallbackMode = false;
-    this.modelPath = path.join(__dirname, "..", "ml-model", "model.json");
-    this.metadata = null;
-
-    // Class mapping: model output sigmoid
-    // < 0.5 = class 0 = O = Organik
-    // >= 0.5 = class 1 = R = Anorganik (Recyclable)
-    this.classNames = ["Organik", "Anorganik"];
-    this.imgSize = [224, 224];
-    this.threshold = 0.5;
+    this.pendingRequests = new Map(); // requestId → { resolve, reject }
+    this.requestCounter = 0;
   }
 
-  /**
-   * Load model dari file system.
-   * Dipanggil saat server startup.
-   */
   async loadModel() {
     try {
       // Check if TensorFlow.js is available
@@ -163,42 +151,9 @@ class ClassificationService {
     }
   }
 
-  /**
-   * Klasifikasi gambar sampah.
-   *
-   * @param {Buffer} imageBuffer - Raw JPEG image buffer dari ESP32-CAM
-   * @returns {Object} { jenis: string, confidence: number, raw_score: number }
-   */
-  async classify(imageBuffer) {
+  classify(imageBuffer) {
     if (!this.isReady) {
-      throw new Error(
-        "Classification service is not initialized.",
-      );
-    }
-
-    if (this.isFallbackMode) {
-      // Mock/Fallback classification logic
-      const classes = ["Organik", "Anorganik"];
-      const jenis = classes[Math.floor(Math.random() * classes.length)];
-      const confidence = parseFloat((0.75 + Math.random() * 0.23).toFixed(4)); // Random between 75% and 98%
-      const inferenceTime = Math.floor(50 + Math.random() * 100);
-
-      logger.warning(
-        `[FALLBACK MOCK CLASSIFICATION] Image classified as ${jenis} (confidence: ${(confidence * 100).toFixed(1)}%, size: ${imageBuffer ? imageBuffer.length : 0} bytes)`,
-      );
-
-      return {
-        jenis,
-        confidence,
-        raw_score: jenis === "Anorganik" ? confidence : 1 - confidence,
-        inference_time_ms: inferenceTime,
-      };
-    }
-
-    if (!this.model) {
-      throw new Error(
-        "Classification model is not loaded.",
-      );
+      return Promise.reject(new Error("Model belum siap"));
     }
 
     let tensor = null;
@@ -221,63 +176,26 @@ class ClassificationService {
       }
       tensor = tf.tensor3d(rgbBuffer, [height, width, 3]);
 
-      // 2. Resize ke model input size (224x224)
-      tensor = tf.image.resizeBilinear(tensor, this.imgSize);
-
-      // 3. Normalize pixel values [0, 1]
-      tensor = tensor.toFloat().div(tf.scalar(255.0));
-
-      // 4. Add batch dimension: [224, 224, 3] → [1, 224, 224, 3]
-      tensor = tensor.expandDims(0);
-
-      // 5. Run inference
-      prediction = this.model.predict(tensor);
-      const score = (await prediction.data())[0]; // Sigmoid output [0, 1]
-
-      const inferenceTime = Date.now() - startTime;
-
-      // 6. Interpret result
-      // score < 0.5 → Organik (class 0 = O)
-      // score >= 0.5 → Anorganik (class 1 = R)
-      const isAnorganik = score >= this.threshold;
-      const jenis = isAnorganik ? "Anorganik" : "Organik";
-      const confidence = isAnorganik ? score : 1 - score;
-
-      logger.info(
-        `Classification: ${jenis} (confidence: ${(confidence * 100).toFixed(1)}%, raw_score: ${score.toFixed(4)}, time: ${inferenceTime}ms)`,
+      // Kirim buffer sebagai Uint8Array (transferable)
+      const uint8 = new Uint8Array(imageBuffer);
+      this.worker.postMessage(
+        { type: "classify", buffer: uint8, requestId },
+        [uint8.buffer], // Transfer ownership — zero-copy
       );
 
-      return {
-        jenis,
-        confidence: parseFloat(confidence.toFixed(4)),
-        raw_score: parseFloat(score.toFixed(4)),
-        inference_time_ms: inferenceTime,
-      };
-    } catch (error) {
-      logger.error("Classification inference error", error);
-      throw new Error(`Classification failed: ${error.message}`);
-    } finally {
-      // Cleanup tensors to prevent memory leaks
-      if (tensor) tensor.dispose();
-      if (prediction) prediction.dispose();
-    }
+      // Timeout 30 detik
+      setTimeout(() => {
+        if (this.pendingRequests.has(requestId)) {
+          this.pendingRequests.delete(requestId);
+          reject(new Error("Klasifikasi timeout"));
+        }
+      }, 30000);
+    });
   }
 
-  /**
-   * Get model status info.
-   */
   getStatus() {
-    return {
-      is_ready: this.isReady,
-      is_fallback_mode: this.isFallbackMode,
-      model_path: this.modelPath,
-      model_loaded: this.model !== null,
-      class_names: this.classNames,
-      input_size: this.imgSize,
-      metadata: this.metadata,
-    };
+    return { is_ready: this.isReady, is_fallback: this.isFallbackMode };
   }
 }
 
-// Singleton instance
 module.exports = new ClassificationService();

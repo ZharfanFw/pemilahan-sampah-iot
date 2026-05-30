@@ -1,49 +1,42 @@
 require("dotenv").config();
 const express = require("express");
-const cors = require("cors"); // Pastikan sudah npm install cors
+const cors = require("cors");
 const path = require("path");
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
-app.use(express.json()); // Supaya server bisa membaca req.body berupa JSON
+app.use(express.json());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Import Routes
-const authRoutes = require("./routes/auth"); // Mengarah ke server/routes/auth.js
-const classifyRoutes = require("./routes/classify"); // Route klasifikasi sampah
-const binsRoutes = require("./routes/bins"); // Route data tempat sampah
-const wasteRoutes = require("./routes/waste"); // Route data riwayat sampah
+const authRoutes = require("./routes/auth");
+const classifyRoutes = require("./routes/classify");
+const binsRoutes = require("./routes/bins");
+const wasteRoutes = require("./routes/waste");
 
 // Import Classification Service
 const classificationService = require("./services/classificationService");
 
 // Gunakan Routes
 app.use("/api/auth", authRoutes);
-app.use("/api/classify", classifyRoutes); // ESP32-CAM kirim gambar ke sini
-app.use("/api/bins", binsRoutes); // Data status & alert bin
-app.use("/api/waste", wasteRoutes); // Riwayat & statistik sampah
+app.use("/api/classify", classifyRoutes);
+app.use("/api/bins", binsRoutes);
+app.use("/api/waste", wasteRoutes);
 
 // Test Route Utama
 app.get("/", (req, res) => {
   res.send("API SmartBin Server Running...");
 });
 
+// Jalankan Server & Load AI
 app.listen(PORT, async () => {
-  console.log(
-    `🚀 Server berjalan dengan aman di port http://localhost:${PORT}`,
-  );
+  console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
+  console.log("🤖 Memulai load model AI di worker thread...");
 
-  // Load ML model saat startup (async, tidak block server)
-  console.log("🤖 Loading classification model...");
-  const modelLoaded = await classificationService.loadModel();
-  if (modelLoaded) {
-    console.log("✅ Classification model ready!");
-    console.log(`   Endpoint: POST http://localhost:${PORT}/api/classify`);
-  } else {
-    console.log("⚠️  Classification model not available.");
-    console.log("   Run: cd model && python train_model.py");
-  }
+  // Tidak perlu setTimeout — worker thread tidak memblokir login/dashboard
+  await classificationService.loadModel();
+  console.log("✅ Worker thread siap!");
 });

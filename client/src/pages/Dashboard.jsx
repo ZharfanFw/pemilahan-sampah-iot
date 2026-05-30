@@ -221,9 +221,7 @@ export default function Dashboard() {
                 <span
                   className={`w-2 h-2 rounded-full ${error ? "bg-red-400" : "bg-green-400"}`}
                 ></span>
-                <span>
-                  Update: {lastUpdate.toLocaleTimeString("id-ID")}
-                </span>
+                <span>Update: {lastUpdate.toLocaleTimeString("id-ID")}</span>
               </>
             ) : null}
           </div>
@@ -377,7 +375,7 @@ export default function Dashboard() {
                 <div className="flex-1 flex flex-col items-center justify-center bg-black rounded-lg overflow-hidden relative group aspect-square lg:aspect-auto lg:h-72 shadow-inner border border-gray-900">
                   {/* The camera image */}
                   <img
-                    src={`http://127.0.0.1:3000/uploads/latest.jpg?t=${imgTimestamp}`}
+                    src={`http://localhost:3000/uploads/latest.jpg?t=${imgTimestamp}`}
                     alt="Terdeteksi Terakhir"
                     className="w-full h-full object-cover"
                     onError={(e) => {
