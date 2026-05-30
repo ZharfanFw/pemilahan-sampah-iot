@@ -120,16 +120,6 @@ class ClassificationService {
         return true;
       }
 
-<<<<<<< maul
-      logger.info(`Loading classification model from: ${this.modelPath}`);
-      const startTime = Date.now();
-
-      // Load TFJS model using our custom Keras v3 compatibility loader
-      this.model = await tf.loadLayersModel(kerasV3FileLoader(this.modelPath));
-
-      const loadTime = Date.now() - startTime;
-      logger.success(`Classification model loaded in ${loadTime}ms`);
-=======
       logger.info(`Loading classification graph model from: ${this.modelPath}`);
       const startTime = Date.now();
 
@@ -138,7 +128,6 @@ class ClassificationService {
 
       const loadTime = Date.now() - startTime;
       logger.success(`Classification graph model loaded successfully in ${loadTime}ms`);
->>>>>>> local
 
       // Load metadata if available
       const metadataPath = path.join(
@@ -155,11 +144,7 @@ class ClassificationService {
         );
       }
 
-<<<<<<< maul
-      // Warmup: run a dummy prediction to initialize
-=======
       // Warmup: run a dummy prediction to initialize execution kernels
->>>>>>> local
       const dummyInput = tf.zeros([1, ...this.imgSize, 3]);
       const warmupResult = this.model.predict(dummyInput);
       warmupResult.dispose();
@@ -295,8 +280,4 @@ class ClassificationService {
 }
 
 // Singleton instance
-<<<<<<< maul
 module.exports = new ClassificationService();
-=======
-module.exports = new ClassificationService();
->>>>>>> local
