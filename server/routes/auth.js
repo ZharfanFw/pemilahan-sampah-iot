@@ -11,6 +11,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "rahasia_bukan_siapa_siapa";
 router.post("/login", async (req, res) => {
   try {
     const { username, password } = req.body;
+    console.log(`\n[LOGIN TRACE] 1. Request masuk untuk user: ${username}`);
 
     // 1. Validasi input
     if (!username || !password) {
@@ -21,10 +22,15 @@ router.post("/login", async (req, res) => {
 
     // 2. Cari user di Firebase Realtime DB berdasarkan username
     const usersRef = db.ref("users");
+
+    console.log("[LOGIN TRACE] 2. Menghubungi Firebase...");
+    // ===== JIKA NYANGKUT, DIA AKAN BERHENTI DI SINI =====
     const snapshot = await usersRef
       .orderByChild("username")
       .equalTo(username)
       .once("value");
+
+    console.log("[LOGIN TRACE] 3. Firebase merespons!");
 
     if (!snapshot.exists()) {
       return res.status(404).json({ message: "Username tidak ditemukan" });
@@ -33,6 +39,7 @@ router.post("/login", async (req, res) => {
     // Ambil data user pertama yang cocok
     const userKey = Object.keys(snapshot.val())[0];
     const userData = snapshot.val()[userKey];
+    console.log(`[LOGIN TRACE] 4. Data ditemukan:`, userData.username);
 
     // 3. Cek apakah password cocok dengan hash di database
     const isPasswordValid = await bcrypt.compare(password, userData.password);
@@ -47,6 +54,8 @@ router.post("/login", async (req, res) => {
       { expiresIn: "24h" },
     );
 
+    console.log("[LOGIN TRACE] 5. Login Sukses. Mengirim token ke React.");
+
     // 5. Kirim response ke React Frontend
     return res.status(200).json({
       message: "Login berhasil",
@@ -57,7 +66,7 @@ router.post("/login", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error("\n[LOGIN TRACE] ERROR KETANGKAP:", error);
     return res.status(500).json({ message: "Terjadi kesalahan pada server" });
   }
 });

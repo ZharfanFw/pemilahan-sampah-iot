@@ -1,217 +1,84 @@
-/**
- * classificationService.js
- * ========================
- * Service untuk klasifikasi sampah menggunakan model TensorFlow.js (MobileNetV2).
- * Model di-load sekali saat startup dan digunakan untuk semua request (singleton).
- *
- * Input : Buffer gambar JPEG dari ESP32-CAM
- * Output: { jenis: "Organik"|"Anorganik", confidence: 0.95 }
- */
-
-let tf = null;
-try {
-  tf = require("@tensorflow/tfjs-node");
-} catch (err) {
-  console.warn(
-    "⚠️  @tensorflow/tfjs-node failed to load (Node.js version mismatch). Classification will be unavailable.",
-  );
-}
+const { Worker } = require("worker_threads");
 const path = require("path");
-const fs = require("fs");
 const logger = require("../utils/logger");
 
 class ClassificationService {
   constructor() {
-    this.model = null;
+    this.worker = null;
     this.isReady = false;
     this.isFallbackMode = false;
-    this.modelPath = path.join(__dirname, "..", "ml-model", "model.json");
-    this.metadata = null;
-
-    // Class mapping: model output sigmoid
-    // < 0.5 = class 0 = O = Organik
-    // >= 0.5 = class 1 = R = Anorganik (Recyclable)
-    this.classNames = ["Organik", "Anorganik"];
-    this.imgSize = [224, 224];
-    this.threshold = 0.5;
+    this.pendingRequests = new Map(); // requestId → { resolve, reject }
+    this.requestCounter = 0;
   }
 
-  /**
-   * Load model dari file system.
-   * Dipanggil saat server startup.
-   */
   async loadModel() {
-    try {
-      // Check if TensorFlow.js is available
-      if (!tf) {
-        logger.warning(
-          "TensorFlow.js not available. Switching to MOCK/FALLBACK mode for testing.",
-        );
-        this.isFallbackMode = true;
-        this.isReady = true;
-        return true;
-      }
+    return new Promise((resolve) => {
+      this.worker = new Worker(path.join(__dirname, "classificationWorker.js"));
 
-      // Check if model files exist
-      if (!fs.existsSync(this.modelPath)) {
-        logger.warning(
-          `Model file not found at: ${this.modelPath}. Switching to MOCK/FALLBACK mode for testing.`,
-        );
-        logger.info(
-          "To enable classification, run: cd model && python train_model.py",
-        );
-        this.isFallbackMode = true;
-        this.isReady = true;
-        return true;
-      }
+      this.worker.on("message", (msg) => {
+        if (msg.type === "status") {
+          this.isReady = msg.ready;
+          this.isFallbackMode = msg.fallback || false;
+          if (msg.error)
+            logger.error("[Worker] Error loading model:", msg.error);
+          logger.info(`[ML] Worker siap. Fallback: ${this.isFallbackMode}`);
+          resolve(true);
+        }
 
-      logger.info(`Loading classification model from: ${this.modelPath}`);
-      const startTime = Date.now();
+        if (msg.type === "result") {
+          const pending = this.pendingRequests.get(msg.requestId);
+          if (!pending) return;
+          this.pendingRequests.delete(msg.requestId);
+          if (msg.error) pending.reject(new Error(msg.error));
+          else pending.resolve(msg.data);
+        }
+      });
 
-      // Load TFJS model (LayersModel from Keras conversion)
-      this.model = await tf.loadLayersModel(`file://${this.modelPath}`);
+      this.worker.on("error", (err) => {
+        logger.error("[Worker] Worker crash:", err);
+        // Resolve semua pending request dengan error
+        for (const [id, pending] of this.pendingRequests) {
+          pending.reject(new Error("Worker error"));
+          this.pendingRequests.delete(id);
+        }
+      });
 
-      const loadTime = Date.now() - startTime;
-      logger.success(`Classification model loaded in ${loadTime}ms`);
-
-      // Load metadata if available
-      const metadataPath = path.join(
-        __dirname,
-        "..",
-        "..",
-        "model",
-        "model_metadata.json",
-      );
-      if (fs.existsSync(metadataPath)) {
-        this.metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
-        logger.info(
-          `Model metadata loaded: ${this.metadata.model_name} (${this.metadata.architecture})`,
-        );
-      }
-
-      // Warmup: run a dummy prediction to initialize
-      const dummyInput = tf.zeros([1, ...this.imgSize, 3]);
-      const warmupResult = this.model.predict(dummyInput);
-      warmupResult.dispose();
-      dummyInput.dispose();
-      logger.info("Model warmup complete");
-
-      this.isReady = true;
-      this.isFallbackMode = false;
-      return true;
-    } catch (error) {
-      logger.error("Failed to load classification model", error);
-      logger.warning("Switching to MOCK/FALLBACK mode due to error.");
-      this.isFallbackMode = true;
-      this.isReady = true;
-      return true;
-    }
+      this.worker.on("exit", (code) => {
+        logger.warning(`[Worker] Worker berhenti dengan kode ${code}`);
+        this.isReady = false;
+      });
+    });
   }
 
-  /**
-   * Klasifikasi gambar sampah.
-   *
-   * @param {Buffer} imageBuffer - Raw JPEG image buffer dari ESP32-CAM
-   * @returns {Object} { jenis: string, confidence: number, raw_score: number }
-   */
-  async classify(imageBuffer) {
+  classify(imageBuffer) {
     if (!this.isReady) {
-      throw new Error(
-        "Classification service is not initialized.",
-      );
+      return Promise.reject(new Error("Model belum siap"));
     }
 
-    if (this.isFallbackMode) {
-      // Mock/Fallback classification logic
-      const classes = ["Organik", "Anorganik"];
-      const jenis = classes[Math.floor(Math.random() * classes.length)];
-      const confidence = parseFloat((0.75 + Math.random() * 0.23).toFixed(4)); // Random between 75% and 98%
-      const inferenceTime = Math.floor(50 + Math.random() * 100);
+    return new Promise((resolve, reject) => {
+      const requestId = ++this.requestCounter;
+      this.pendingRequests.set(requestId, { resolve, reject });
 
-      logger.warning(
-        `[FALLBACK MOCK CLASSIFICATION] Image classified as ${jenis} (confidence: ${(confidence * 100).toFixed(1)}%, size: ${imageBuffer ? imageBuffer.length : 0} bytes)`,
+      // Kirim buffer sebagai Uint8Array (transferable)
+      const uint8 = new Uint8Array(imageBuffer);
+      this.worker.postMessage(
+        { type: "classify", buffer: uint8, requestId },
+        [uint8.buffer], // Transfer ownership — zero-copy
       );
 
-      return {
-        jenis,
-        confidence,
-        raw_score: jenis === "Anorganik" ? confidence : 1 - confidence,
-        inference_time_ms: inferenceTime,
-      };
-    }
-
-    if (!this.model) {
-      throw new Error(
-        "Classification model is not loaded.",
-      );
-    }
-
-    let tensor = null;
-    let prediction = null;
-
-    try {
-      const startTime = Date.now();
-
-      // 1. Decode JPEG buffer ke tensor
-      tensor = tf.node.decodeImage(imageBuffer, 3); // Force 3 channels (RGB)
-
-      // 2. Resize ke model input size (224x224)
-      tensor = tf.image.resizeBilinear(tensor, this.imgSize);
-
-      // 3. Normalize pixel values [0, 1]
-      tensor = tensor.toFloat().div(tf.scalar(255.0));
-
-      // 4. Add batch dimension: [224, 224, 3] → [1, 224, 224, 3]
-      tensor = tensor.expandDims(0);
-
-      // 5. Run inference
-      prediction = this.model.predict(tensor);
-      const score = (await prediction.data())[0]; // Sigmoid output [0, 1]
-
-      const inferenceTime = Date.now() - startTime;
-
-      // 6. Interpret result
-      // score < 0.5 → Organik (class 0 = O)
-      // score >= 0.5 → Anorganik (class 1 = R)
-      const isAnorganik = score >= this.threshold;
-      const jenis = isAnorganik ? "Anorganik" : "Organik";
-      const confidence = isAnorganik ? score : 1 - score;
-
-      logger.info(
-        `Classification: ${jenis} (confidence: ${(confidence * 100).toFixed(1)}%, raw_score: ${score.toFixed(4)}, time: ${inferenceTime}ms)`,
-      );
-
-      return {
-        jenis,
-        confidence: parseFloat(confidence.toFixed(4)),
-        raw_score: parseFloat(score.toFixed(4)),
-        inference_time_ms: inferenceTime,
-      };
-    } catch (error) {
-      logger.error("Classification inference error", error);
-      throw new Error(`Classification failed: ${error.message}`);
-    } finally {
-      // Cleanup tensors to prevent memory leaks
-      if (tensor) tensor.dispose();
-      if (prediction) prediction.dispose();
-    }
+      // Timeout 30 detik
+      setTimeout(() => {
+        if (this.pendingRequests.has(requestId)) {
+          this.pendingRequests.delete(requestId);
+          reject(new Error("Klasifikasi timeout"));
+        }
+      }, 30000);
+    });
   }
 
-  /**
-   * Get model status info.
-   */
   getStatus() {
-    return {
-      is_ready: this.isReady,
-      is_fallback_mode: this.isFallbackMode,
-      model_path: this.modelPath,
-      model_loaded: this.model !== null,
-      class_names: this.classNames,
-      input_size: this.imgSize,
-      metadata: this.metadata,
-    };
+    return { is_ready: this.isReady, is_fallback: this.isFallbackMode };
   }
 }
 
-// Singleton instance
 module.exports = new ClassificationService();

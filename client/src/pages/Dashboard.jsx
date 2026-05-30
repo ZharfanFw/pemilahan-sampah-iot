@@ -183,9 +183,7 @@ export default function Dashboard() {
                 <span
                   className={`w-2 h-2 rounded-full ${error ? "bg-red-400" : "bg-green-400"}`}
                 ></span>
-                <span>
-                  Update: {lastUpdate.toLocaleTimeString("id-ID")}
-                </span>
+                <span>Update: {lastUpdate.toLocaleTimeString("id-ID")}</span>
               </>
             ) : null}
           </div>
@@ -323,18 +321,21 @@ export default function Dashboard() {
                 </div>
                 <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 border border-gray-100 rounded-lg overflow-hidden relative group aspect-square lg:aspect-auto lg:h-72">
                   <img
-                    src={`http://127.0.0.1:3000/uploads/latest.jpg?t=${imgTimestamp}`}
+                    src={`http://localhost:3000/uploads/latest.jpg?t=${imgTimestamp}`}
                     alt="Terdeteksi Terakhir"
                     className="w-full h-full object-cover"
                     onError={(e) => {
                       // Fallback if image doesn't exist yet
                       e.target.onerror = null;
-                      e.target.src = "https://placehold.co/600x400/f3f4f6/9ca3af?text=Belum+Ada+Foto";
+                      e.target.src =
+                        "https://placehold.co/600x400/f3f4f6/9ca3af?text=Belum+Ada+Foto";
                     }}
                   />
                   <div className="absolute bottom-0 left-0 right-0 bg-black/60 backdrop-blur-xs text-white text-xs p-3 flex justify-between items-center opacity-90 transition-opacity">
                     <span className="font-semibold">ESP32-CAM Preview</span>
-                    <span className="text-[10px] text-gray-300">Auto-refresh aktif</span>
+                    <span className="text-[10px] text-gray-300">
+                      Auto-refresh aktif
+                    </span>
                   </div>
                 </div>
               </div>
