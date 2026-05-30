@@ -28,11 +28,11 @@
 // ============================================================================
 
 // WiFi credentials
-const char* WIFI_SSID     = "Workshop FPMIPA 5G";      // ← Ganti dengan SSID WiFi
-const char* WIFI_PASSWORD = "bengkelmipa";   // ← Ganti dengan password WiFi
+const char* WIFI_SSID     = "SSID";      // ← Ganti dengan SSID WiFi
+const char* WIFI_PASSWORD = "PASSWORD";   // ← Ganti dengan password WiFi
 
 // Server configuration
-const char* SERVER_IP   = "192.168.0.227";   // ← Ganti dengan IP server Node.js
+const char* SERVER_IP   = "IPLOKAL";   // ← Ganti dengan IP server Node.js
 const int   SERVER_PORT = 3000;
 const char* BIN_ID      = "bin-001";
 

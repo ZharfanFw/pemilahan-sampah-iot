@@ -24,72 +24,13 @@ wasm.setWasmPaths({
 });
 
 /**
- * Helper to convert Keras v3 inbound_nodes to Keras v2 format that TFJS expects.
+ * Custom TFJS IOHandler to load local Graph Model files using native Node.js filesystem APIs.
  */
-function convertV3ToV2InboundNodes(inboundNodesV3) {
-  if (!Array.isArray(inboundNodesV3)) return inboundNodesV3;
-  return inboundNodesV3.map(node => {
-    if (Array.isArray(node)) return node;
-    const args = node.args || [];
-    const convertedLinks = [];
-    for (const arg of args) {
-      if (arg && arg.class_name === '__keras_tensor__' && arg.config && arg.config.keras_history) {
-        const hist = arg.config.keras_history;
-        convertedLinks.push([hist[0], hist[1], hist[2], {}]);
-      }
-    }
-    return convertedLinks;
-  });
-}
-
-/**
- * Recursively convert Keras v3 layer configs to Keras v2 format.
- */
-function convertKerasV3ToV2(layer) {
-  if (!layer || typeof layer !== 'object') return;
-
-  // 1. Simplify dtype object if it exists
-  if (layer.config && layer.config.dtype && typeof layer.config.dtype === 'object') {
-    layer.config.dtype = layer.config.dtype.config ? layer.config.dtype.config.name : 'float32';
-  }
-  if (layer.dtype && typeof layer.dtype === 'object') {
-    layer.dtype = layer.dtype.config ? layer.dtype.config.name : 'float32';
-  }
-
-  // 2. Convert batch_shape to batchInputShape in InputLayer
-  if (layer.class_name === 'InputLayer' && layer.config) {
-    if (layer.config.batch_shape && !layer.config.batchInputShape) {
-      layer.config.batchInputShape = layer.config.batch_shape;
-      delete layer.config.batch_shape;
-    }
-  }
-
-  // 3. Convert inbound_nodes
-  if (layer.inbound_nodes) {
-    layer.inbound_nodes = convertV3ToV2InboundNodes(layer.inbound_nodes);
-  }
-
-  // 4. Recurse down nested layers
-  if (layer.config && Array.isArray(layer.config.layers)) {
-    layer.config.layers.forEach(convertKerasV3ToV2);
-  }
-  if (Array.isArray(layer.layers)) {
-    layer.layers.forEach(convertKerasV3ToV2);
-  }
-}
-
-/**
- * Custom TFJS IOHandler to load local model files and adapt Keras v3 configuration.
- */
-function kerasV3FileLoader(jsonPath) {
+function graphFileLoader(jsonPath) {
   return {
     load: async () => {
       const content = await fs.promises.readFile(jsonPath, 'utf8');
       const json = JSON.parse(content);
-
-      if (json.modelTopology && json.modelTopology.model_config) {
-        convertKerasV3ToV2(json.modelTopology.model_config);
-      }
 
       const dir = path.dirname(jsonPath);
       const buffers = [];
@@ -100,16 +41,31 @@ function kerasV3FileLoader(jsonPath) {
             buffers.push(buf);
           }
         }
-        
-        // Native Node.js Buffer concatenation (highly optimized C++ implementation)
-        const combinedBuffer = Buffer.concat(buffers);
-        // Precisely slice the ArrayBuffer to match the exact weights size
-        json.weightData = combinedBuffer.buffer.slice(
+      }
+
+      // Native Node.js Buffer concatenation (highly optimized C++ implementation)
+      const combinedBuffer = Buffer.concat(buffers);
+      
+      // Extract weight specifications
+      const weightSpecs = [];
+      if (json.weightsManifest) {
+        for (const group of json.weightsManifest) {
+          weightSpecs.push(...group.weights);
+        }
+      }
+
+      return {
+        modelTopology: json.modelTopology,
+        format: json.format,
+        generatedBy: json.generatedBy,
+        convertedBy: json.convertedBy,
+        signature: json.signature,
+        weightSpecs: weightSpecs,
+        weightData: combinedBuffer.buffer.slice(
           combinedBuffer.byteOffset,
           combinedBuffer.byteOffset + combinedBuffer.byteLength
-        );
-      }
-      return json;
+        )
+      };
     }
   };
 }
@@ -164,6 +120,7 @@ class ClassificationService {
         return true;
       }
 
+<<<<<<< maul
       logger.info(`Loading classification model from: ${this.modelPath}`);
       const startTime = Date.now();
 
@@ -172,6 +129,16 @@ class ClassificationService {
 
       const loadTime = Date.now() - startTime;
       logger.success(`Classification model loaded in ${loadTime}ms`);
+=======
+      logger.info(`Loading classification graph model from: ${this.modelPath}`);
+      const startTime = Date.now();
+
+      // Load TFJS Graph Model (instantly, no layers compilation loop!)
+      this.model = await tf.loadGraphModel(graphFileLoader(this.modelPath));
+
+      const loadTime = Date.now() - startTime;
+      logger.success(`Classification graph model loaded successfully in ${loadTime}ms`);
+>>>>>>> local
 
       // Load metadata if available
       const metadataPath = path.join(
@@ -188,7 +155,11 @@ class ClassificationService {
         );
       }
 
+<<<<<<< maul
       // Warmup: run a dummy prediction to initialize
+=======
+      // Warmup: run a dummy prediction to initialize execution kernels
+>>>>>>> local
       const dummyInput = tf.zeros([1, ...this.imgSize, 3]);
       const warmupResult = this.model.predict(dummyInput);
       warmupResult.dispose();
@@ -324,4 +295,8 @@ class ClassificationService {
 }
 
 // Singleton instance
+<<<<<<< maul
 module.exports = new ClassificationService();
+=======
+module.exports = new ClassificationService();
+>>>>>>> local
