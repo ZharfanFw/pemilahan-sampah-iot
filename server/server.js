@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors"); // Pastikan sudah npm install cors
+const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -8,10 +9,13 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 app.use(cors());
 app.use(express.json()); // Supaya server bisa membaca req.body berupa JSON
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Import Routes
 const authRoutes = require("./routes/auth"); // Mengarah ke server/routes/auth.js
 const classifyRoutes = require("./routes/classify"); // Route klasifikasi sampah
+const binsRoutes = require("./routes/bins"); // Route data tempat sampah
+const wasteRoutes = require("./routes/waste"); // Route data riwayat sampah
 
 // Import Classification Service
 const classificationService = require("./services/classificationService");
@@ -19,6 +23,8 @@ const classificationService = require("./services/classificationService");
 // Gunakan Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/classify", classifyRoutes); // ESP32-CAM kirim gambar ke sini
+app.use("/api/bins", binsRoutes); // Data status & alert bin
+app.use("/api/waste", wasteRoutes); // Riwayat & statistik sampah
 
 // Test Route Utama
 app.get("/", (req, res) => {

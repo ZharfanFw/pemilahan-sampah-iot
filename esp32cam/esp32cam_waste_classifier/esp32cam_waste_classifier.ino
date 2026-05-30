@@ -28,12 +28,12 @@
 // ============================================================================
 
 // WiFi credentials
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";      // ← Ganti dengan SSID WiFi
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";   // ← Ganti dengan password WiFi
+const char* WIFI_SSID     = "Workshop FPMIPA 5G";      // ← Ganti dengan SSID WiFi
+const char* WIFI_PASSWORD = "bengkelmipa";   // ← Ganti dengan password WiFi
 
 // Server configuration
-const char* SERVER_IP   = "192.168.1.100";   // ← Ganti dengan IP server Node.js
-const int   SERVER_PORT = 5000;
+const char* SERVER_IP   = "192.168.0.227";   // ← Ganti dengan IP server Node.js
+const int   SERVER_PORT = 3000;
 const char* BIN_ID      = "bin-001";
 
 // Servo configuration
@@ -200,8 +200,8 @@ void initCamera() {
   // Gunakan QVGA untuk kecepatan, atau VGA untuk kualitas lebih baik
   // Model akan resize ke 224x224 di server
   if (psramFound()) {
-    config.frame_size   = FRAMESIZE_VGA;     // 640x480
-    config.jpeg_quality = 12;                // 0-63 (lower = better quality)
+    config.frame_size   = FRAMESIZE_QVGA;     // 640x480
+    config.jpeg_quality = 15;                // 0-63 (lower = better quality)
     config.fb_count     = 2;
     Serial.println("   PSRAM found → VGA mode (640x480)");
   } else {

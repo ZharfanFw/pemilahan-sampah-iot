@@ -1,28 +1,76 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { getBinStatus, getServerHealth } from "../services/api";
 
 export default function Pengaturan() {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem("user")) || { nama: "Petugas" };
 
-  // 1. STATE UNTUK KALIBRASI SENSOR (Sesuai Logika Ultrasonic di Canvas)
+  // State konektivitas real dari Firebase
+  const [binStatus, setBinStatus] = useState(null);
+  const [serverOnline, setServerOnline] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // State kalibrasi sensor
   const [config, setConfig] = useState({
-    tinggiMaks: 50, // cm
-    batasPenuh: 5, // cm
+    tinggiMaks: 50,
+    batasPenuh: 5,
     mqttBroker: "broker.emqx.io",
     deviceId: "smartbin-001",
   });
+  const [saving, setSaving] = useState(false);
+
+  // Fetch status konektivitas
+  const fetchStatus = useCallback(async () => {
+    try {
+      setError(null);
+
+      const [binRes, healthRes] = await Promise.all([
+        getBinStatus("bin-001"),
+        getServerHealth(),
+      ]);
+
+      if (binRes.success) {
+        setBinStatus(binRes.data);
+      }
+
+      setServerOnline(healthRes.online);
+    } catch (err) {
+      console.error("Gagal fetch status:", err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 10000); // Poll setiap 10 detik
+    return () => clearInterval(interval);
+  }, [fetchStatus]);
 
   const handleLogout = () => {
     localStorage.removeItem("user");
+    localStorage.removeItem("token");
     navigate("/login");
   };
 
-  const handleSave = (e) => {
+  const handleSave = async (e) => {
     e.preventDefault();
-    alert("Konfigurasi berhasil disimpan ke sistem!");
-    // Nantinya di sini akan memanggil API POST /api/config
+    setSaving(true);
+    // Simpan kalibrasi — bisa diperluas nanti ke API POST
+    setTimeout(() => {
+      setSaving(false);
+      alert("Konfigurasi berhasil disimpan!");
+    }, 500);
   };
+
+  // Derived values
+  const isOnline = binStatus?.status?.is_online ?? false;
+  const lastUpdate = binStatus?.status?.lastUpdate
+    ? new Date(binStatus.status.lastUpdate).toLocaleString("id-ID")
+    : "-";
 
   return (
     <div className="flex h-screen bg-gray-50 text-gray-800 font-sans">
@@ -87,6 +135,15 @@ export default function Pengaturan() {
           </p>
         </header>
 
+        {/* ERROR */}
+        {error && (
+          <div className="mb-6 bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-md shadow-sm">
+            <p className="text-sm text-yellow-700">
+              ⚠️ Gagal memuat status: {error}
+            </p>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* BAGIAN 1: KALIBRASI SENSOR ULTRASONIC */}
           <section className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
@@ -138,9 +195,10 @@ export default function Pengaturan() {
               </div>
               <button
                 type="submit"
-                className="w-full py-2 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors mt-4"
+                disabled={saving}
+                className="w-full py-2 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors mt-4 disabled:opacity-50"
               >
-                Simpan Kalibrasi
+                {saving ? "Menyimpan..." : "Simpan Kalibrasi"}
               </button>
             </form>
           </section>
@@ -149,25 +207,66 @@ export default function Pengaturan() {
           <section className="space-y-6">
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
               <h3 className="text-lg font-bold mb-4">Status Konektivitas</h3>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                  <span className="text-sm font-medium">
-                    MQTT Broker Status
-                  </span>
-                  <span className="flex items-center gap-1.5 text-green-600 font-bold text-xs">
-                    <span className="w-2 h-2 rounded-full bg-green-500"></span>{" "}
-                    CONNECTED
-                  </span>
+
+              {loading ? (
+                <div className="space-y-4 animate-pulse">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-12 bg-gray-100 rounded-lg"></div>
+                  ))}
                 </div>
-                <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                  <span className="text-sm font-medium">
-                    Last Sync ESP32-CAM
-                  </span>
-                  <span className="text-xs text-gray-500 font-mono">
-                    22-05-2026 14:02:11
-                  </span>
+              ) : (
+                <div className="space-y-4">
+                  {/* API Server */}
+                  <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                    <span className="text-sm font-medium">
+                      API Server Status
+                    </span>
+                    <span
+                      className={`flex items-center gap-1.5 font-bold text-xs ${serverOnline ? "text-green-600" : "text-red-500"}`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-full ${serverOnline ? "bg-green-500" : "bg-red-500"}`}
+                      ></span>
+                      {serverOnline ? "CONNECTED" : "DISCONNECTED"}
+                    </span>
+                  </div>
+
+                  {/* ESP32-CAM / IoT Device */}
+                  <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                    <span className="text-sm font-medium">
+                      SmartBin Device
+                    </span>
+                    <span
+                      className={`flex items-center gap-1.5 font-bold text-xs ${isOnline ? "text-green-600" : "text-red-500"}`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-red-500"}`}
+                      ></span>
+                      {isOnline ? "ONLINE" : "OFFLINE"}
+                    </span>
+                  </div>
+
+                  {/* Last Sync */}
+                  <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                    <span className="text-sm font-medium">
+                      Last Sync Data
+                    </span>
+                    <span className="text-xs text-gray-500 font-mono">
+                      {lastUpdate}
+                    </span>
+                  </div>
+
+                  {/* Kapasitas */}
+                  <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                    <span className="text-sm font-medium">
+                      Kapasitas Bin Saat Ini
+                    </span>
+                    <span className="text-xs font-bold text-blue-600">
+                      {binStatus?.status?.kapasitas_persen ?? 0}%
+                    </span>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
@@ -179,7 +278,7 @@ export default function Pengaturan() {
                 <div>
                   <p className="font-bold text-gray-900">{user.nama}</p>
                   <p className="text-xs text-gray-500 uppercase tracking-widest font-semibold">
-                    Petugas Administrasi
+                    {user.role || "Petugas Administrasi"}
                   </p>
                 </div>
               </div>

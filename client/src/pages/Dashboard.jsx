@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Chart as ChartJS,
@@ -10,6 +10,7 @@ import {
   Legend,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
+import { getBinStatus, getWasteStats } from "../services/api";
 
 ChartJS.register(
   CategoryScale,
@@ -24,43 +25,76 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem("user")) || { nama: "Petugas" };
 
-  // State kapasitsas
-  const [capacity, setCapacity] = useState(0);
+  // State data real dari Firebase via API
+  const [binStatus, setBinStatus] = useState(null);
+  const [todayStats, setTodayStats] = useState({
+    total: 0,
+    organik: 0,
+    anorganik: 0,
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [imgTimestamp, setImgTimestamp] = useState(Date.now());
 
-  // Alert
+  // Fetch data dari API backend
+  const fetchData = useCallback(async () => {
+    try {
+      setError(null);
+
+      const [binRes, statsRes] = await Promise.all([
+        getBinStatus("bin-001"),
+        getWasteStats("today", "bin-001"),
+      ]);
+
+      if (binRes.success) {
+        setBinStatus(binRes.data);
+      }
+
+      if (statsRes.success) {
+        setTodayStats(statsRes.data);
+      }
+
+      setLastUpdate(new Date());
+      setImgTimestamp(Date.now());
+    } catch (err) {
+      console.error("Gagal fetch data dashboard:", err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Fetch awal + polling setiap 5 detik
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 5000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
+
+  // Derived state
+  const capacity = binStatus?.status?.kapasitas_persen ?? 0;
+  const isOnline = binStatus?.status?.is_online ?? false;
   const isBinFull = capacity >= 90;
 
   const handleLogout = () => {
     localStorage.removeItem("user");
+    localStorage.removeItem("token");
     navigate("/login");
   };
 
-  // Simulasi tambah sampah (ini sementara)
-  const simulateAddTrash = () => {
-    if (capacity < 100) {
-      setCapacity((prev) => Math.min(prev + 25, 100)); // Tambah 25% setiap klik, maksimal 100%
-    }
-  };
-
-  const simulateEmptyBin = () => {
-    setCapacity(0); // Kosongkan kembali
-  };
-
-  // Konfigurasi Chart.js
+  // Konfigurasi Chart.js — data dari statistik
   const chartData = {
-    labels: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"],
+    labels: ["Organik", "Anorganik"],
     datasets: [
       {
-        label: "Organik",
-        data: [12, 19, 15, 22, 14, 28, 30],
-        backgroundColor: "rgba(34, 197, 94, 0.8)",
-        borderRadius: 4,
-      },
-      {
-        label: "Anorganik",
-        data: [8, 11, 13, 18, 10, 20, 25],
-        backgroundColor: "rgba(59, 130, 246, 0.8)",
-        borderRadius: 4,
+        label: "Jumlah Hari Ini",
+        data: [todayStats.organik || 0, todayStats.anorganik || 0],
+        backgroundColor: [
+          "rgba(34, 197, 94, 0.8)",
+          "rgba(59, 130, 246, 0.8)",
+        ],
+        borderRadius: 6,
       },
     ],
   };
@@ -73,6 +107,7 @@ export default function Dashboard() {
       y: {
         beginAtZero: true,
         title: { display: true, text: "Jumlah Sampah (Item)" },
+        ticks: { stepSize: 1 },
       },
     },
   };
@@ -139,24 +174,33 @@ export default function Dashboard() {
             </p>
           </div>
 
-          {/* TOMBOL SIMULASI*/}
-          <div className="flex gap-2">
-            <button
-              onClick={simulateAddTrash}
-              className="px-4 py-2 bg-purple-600 text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-purple-700"
-            >
-              + Simulasi Sampah Masuk
-            </button>
-            <button
-              onClick={simulateEmptyBin}
-              className="px-4 py-2 bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg shadow-sm hover:bg-gray-300"
-            >
-              Kosongkan Bin
-            </button>
+          {/* Indikator update terakhir */}
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            {loading && !binStatus ? (
+              <span className="animate-pulse">Memuat data...</span>
+            ) : lastUpdate ? (
+              <>
+                <span
+                  className={`w-2 h-2 rounded-full ${error ? "bg-red-400" : "bg-green-400"}`}
+                ></span>
+                <span>
+                  Update: {lastUpdate.toLocaleTimeString("id-ID")}
+                </span>
+              </>
+            ) : null}
           </div>
         </header>
 
-        {/* KOMPONEN ALERT NOTIFIKASI */}
+        {/* ERROR BANNER */}
+        {error && (
+          <div className="mb-6 bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-md shadow-sm">
+            <p className="text-sm text-yellow-700">
+              ⚠️ Gagal memuat data: {error}. Akan coba lagi otomatis...
+            </p>
+          </div>
+        )}
+
+        {/* KOMPONEN ALERT NOTIFIKASI — BIN PENUH */}
         {isBinFull && (
           <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-md shadow-sm animate-pulse">
             <div className="flex items-center">
@@ -185,59 +229,118 @@ export default function Dashboard() {
           </div>
         )}
 
-        <section>
-          {/* Widget Kartu Data */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <article className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center">
-              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
-                Status Alat
-              </h3>
-              <p className="text-2xl font-bold text-green-600 mt-2">ONLINE</p>
-            </article>
-
-            {/* WIDGET KAPASITAS */}
-            <article
-              className={`bg-white p-6 rounded-xl border shadow-sm flex flex-col items-center justify-center relative overflow-hidden transition-colors ${isBinFull ? "border-red-400 bg-red-50" : "border-gray-200"}`}
-            >
-              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
-                Kapasitas Bin
-              </h3>
-              <p
-                className={`text-3xl font-bold mt-2 ${isBinFull ? "text-red-600" : "text-blue-600"}`}
-              >
-                {capacity}%
-              </p>
-
-              {/* Indikator Bar Dinamis di bawah widget */}
-              <div className="absolute bottom-0 left-0 w-full h-1.5 bg-gray-100">
+        {/* LOADING SKELETON */}
+        {loading && !binStatus ? (
+          <section>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              {[1, 2, 3].map((i) => (
                 <div
-                  className={`h-full transition-all duration-500 ease-in-out ${isBinFull ? "bg-red-500" : "bg-blue-500"}`}
-                  style={{ width: `${capacity}%` }}
-                ></div>
-              </div>
-            </article>
-
-            <article className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center">
-              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
-                Total Hari Ini
-              </h3>
-              <p className="text-2xl font-bold text-purple-600 mt-2">
-                42{" "}
-                <span className="text-lg text-gray-500 font-medium">Item</span>
-              </p>
-            </article>
-          </div>
-
-          {/* Grafik */}
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">
-              Grafik Historis Klasifikasi Sampah
-            </h3>
-            <div className="w-full h-72 relative">
-              <Bar data={chartData} options={chartOptions} />
+                  key={i}
+                  className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm animate-pulse"
+                >
+                  <div className="h-4 bg-gray-200 rounded w-2/3 mb-3"></div>
+                  <div className="h-8 bg-gray-200 rounded w-1/2"></div>
+                </div>
+              ))}
             </div>
-          </div>
-        </section>
+          </section>
+        ) : (
+          <section>
+            {/* Widget Kartu Data */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              {/* STATUS ALAT */}
+              <article className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center">
+                <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
+                  Status Alat
+                </h3>
+                <p
+                  className={`text-2xl font-bold mt-2 ${isOnline ? "text-green-600" : "text-red-500"}`}
+                >
+                  {isOnline ? "ONLINE" : "OFFLINE"}
+                </p>
+              </article>
+
+              {/* WIDGET KAPASITAS */}
+              <article
+                className={`bg-white p-6 rounded-xl border shadow-sm flex flex-col items-center justify-center relative overflow-hidden transition-colors ${isBinFull ? "border-red-400 bg-red-50" : "border-gray-200"}`}
+              >
+                <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
+                  Kapasitas Bin
+                </h3>
+                <p
+                  className={`text-3xl font-bold mt-2 ${isBinFull ? "text-red-600" : "text-blue-600"}`}
+                >
+                  {capacity}%
+                </p>
+
+                {/* Indikator Bar Dinamis di bawah widget */}
+                <div className="absolute bottom-0 left-0 w-full h-1.5 bg-gray-100">
+                  <div
+                    className={`h-full transition-all duration-500 ease-in-out ${isBinFull ? "bg-red-500" : "bg-blue-500"}`}
+                    style={{ width: `${capacity}%` }}
+                  ></div>
+                </div>
+              </article>
+
+              {/* TOTAL HARI INI */}
+              <article className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center">
+                <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
+                  Total Hari Ini
+                </h3>
+                <p className="text-2xl font-bold text-purple-600 mt-2">
+                  {todayStats.total}{" "}
+                  <span className="text-lg text-gray-500 font-medium">
+                    Item
+                  </span>
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  🟢 {todayStats.organik} Organik · 🔵 {todayStats.anorganik}{" "}
+                  Anorganik
+                </p>
+              </article>
+            </div>
+
+            {/* Grafik & Foto Hasil Deteksi */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Grafik */}
+              <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-800 mb-4">
+                    Statistik Klasifikasi Sampah Hari Ini
+                  </h3>
+                </div>
+                <div className="w-full h-72 relative">
+                  <Bar data={chartData} options={chartOptions} />
+                </div>
+              </div>
+
+              {/* Kamera Terakhir */}
+              <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-800 mb-4">
+                    Foto Hasil Deteksi Terakhir
+                  </h3>
+                </div>
+                <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 border border-gray-100 rounded-lg overflow-hidden relative group aspect-square lg:aspect-auto lg:h-72">
+                  <img
+                    src={`http://127.0.0.1:3000/uploads/latest.jpg?t=${imgTimestamp}`}
+                    alt="Terdeteksi Terakhir"
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      // Fallback if image doesn't exist yet
+                      e.target.onerror = null;
+                      e.target.src = "https://placehold.co/600x400/f3f4f6/9ca3af?text=Belum+Ada+Foto";
+                    }}
+                  />
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/60 backdrop-blur-xs text-white text-xs p-3 flex justify-between items-center opacity-90 transition-opacity">
+                    <span className="font-semibold">ESP32-CAM Preview</span>
+                    <span className="text-[10px] text-gray-300">Auto-refresh aktif</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
       </main>
     </div>
   );

@@ -1,61 +1,72 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { getWasteHistory } from "../services/api";
 
 export default function RiwayatSampah() {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem("user")) || { nama: "Petugas" };
 
-  // Data dummy
-  const [riwayatData] = useState([
-    {
-      id: "SMPH-001",
-      waktu: "22-05-2026 11:15:22",
-      jenis: "Organik",
-      jumlah: 1,
-    },
-    {
-      id: "SMPH-002",
-      waktu: "22-05-2026 11:12:05",
-      jenis: "Anorganik",
-      jumlah: 1,
-    },
-    {
-      id: "SMPH-003",
-      waktu: "22-05-2026 10:45:10",
-      jenis: "Organik",
-      jumlah: 1,
-    },
-    {
-      id: "SMPH-004",
-      waktu: "22-05-2026 09:30:18",
-      jenis: "Anorganik",
-      jumlah: 2,
-    },
-    {
-      id: "SMPH-005",
-      waktu: "21-05-2026 16:20:00",
-      jenis: "Organik",
-      jumlah: 1,
-    },
-    {
-      id: "SMPH-006",
-      waktu: "21-05-2026 15:10:42",
-      jenis: "Organik",
-      jumlah: 1,
-    },
-    {
-      id: "SMPH-007",
-      waktu: "21-05-2026 14:02:11",
-      jenis: "Anorganik",
-      jumlah: 3,
-    },
-  ]);
+  // State data real dari Firebase
+  const [riwayatData, setRiwayatData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [totalData, setTotalData] = useState(0);
 
-  // State filter sampah
+  // State filter
   const [filterJenis, setFilterJenis] = useState("Semua");
+  const [filterDate, setFilterDate] = useState(() => {
+    // Default: tanggal hari ini dalam format YYYY-MM-DD
+    const today = new Date();
+    return today.toISOString().split("T")[0];
+  });
+
+  // Fetch data dari API
+  const fetchHistory = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const res = await getWasteHistory(filterDate, 50);
+
+      if (res.success) {
+        setRiwayatData(res.data || []);
+        setTotalData(res.total || 0);
+      }
+    } catch (err) {
+      console.error("Gagal fetch riwayat:", err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [filterDate]);
+
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  // Format timestamp ke string tanggal lokal
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return "-";
+    const date = new Date(timestamp);
+    return date.toLocaleString("id-ID", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  };
+
+  // Format confidence ke persen
+  const formatConfidence = (confidence) => {
+    if (!confidence) return "-";
+    return `${(confidence * 100).toFixed(1)}%`;
+  };
 
   const handleLogout = () => {
     localStorage.removeItem("user");
+    localStorage.removeItem("token");
     navigate("/login");
   };
 
@@ -125,30 +136,64 @@ export default function RiwayatSampah() {
               Riwayat Pemilahan
             </h1>
             <p className="text-gray-500 mt-2">
-              Log aktivitas pemilahan sampah otomatis secara real-time.
+              Log aktivitas pemilahan sampah otomatis dari Firebase.
+              {totalData > 0 && (
+                <span className="ml-2 text-green-600 font-medium">
+                  ({totalData} data ditemukan)
+                </span>
+              )}
             </p>
           </div>
 
-          {/* FILTER DROPDOWN */}
-          <div className="flex items-center gap-2">
-            <label
-              htmlFor="filter"
-              className="text-sm font-medium text-gray-600"
-            >
-              Kategori:
-            </label>
-            <select
-              id="filter"
-              value={filterJenis}
-              onChange={(e) => setFilterJenis(e.target.value)}
-              className="px-3 py-2 bg-white border border-gray-300 rounded-lg shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-green-500 text-gray-700"
-            >
-              <option value="Semua">Semua Sampah</option>
-              <option value="Organik">Organik </option>
-              <option value="Anorganik">Anorganik </option>
-            </select>
+          {/* FILTER */}
+          <div className="flex items-center gap-3">
+            {/* Filter Tanggal */}
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="filter-date"
+                className="text-sm font-medium text-gray-600"
+              >
+                Tanggal:
+              </label>
+              <input
+                id="filter-date"
+                type="date"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+                className="px-3 py-2 bg-white border border-gray-300 rounded-lg shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-green-500 text-gray-700"
+              />
+            </div>
+
+            {/* Filter Kategori */}
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="filter"
+                className="text-sm font-medium text-gray-600"
+              >
+                Kategori:
+              </label>
+              <select
+                id="filter"
+                value={filterJenis}
+                onChange={(e) => setFilterJenis(e.target.value)}
+                className="px-3 py-2 bg-white border border-gray-300 rounded-lg shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-green-500 text-gray-700"
+              >
+                <option value="Semua">Semua Sampah</option>
+                <option value="Organik">Organik </option>
+                <option value="Anorganik">Anorganik </option>
+              </select>
+            </div>
           </div>
         </header>
+
+        {/* ERROR */}
+        {error && (
+          <div className="mb-6 bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-md shadow-sm">
+            <p className="text-sm text-yellow-700">
+              ⚠️ Gagal memuat data: {error}
+            </p>
+          </div>
+        )}
 
         {/* TABEL DATA LOG */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -156,24 +201,51 @@ export default function RiwayatSampah() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  <th className="px-6 py-4">ID Sampah</th>
+                  <th className="px-6 py-4">#</th>
                   <th className="px-6 py-4">Waktu Masuk</th>
                   <th className="px-6 py-4">Kategori</th>
-                  <th className="px-6 py-4">Jumlah</th>
-                  <th className="px-6 py-4">Status Mekanik</th>
+                  <th className="px-6 py-4">Confidence</th>
+                  <th className="px-6 py-4">Bin ID</th>
+                  <th className="px-6 py-4">Sumber</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 text-sm text-gray-700">
-                {filteredData.length > 0 ? (
-                  filteredData.map((item) => (
+                {loading ? (
+                  // Loading skeleton rows
+                  [...Array(5)].map((_, i) => (
+                    <tr key={i} className="animate-pulse">
+                      <td className="px-6 py-4">
+                        <div className="h-4 bg-gray-200 rounded w-8"></div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="h-4 bg-gray-200 rounded w-32"></div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="h-4 bg-gray-200 rounded w-20"></div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="h-4 bg-gray-200 rounded w-16"></div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="h-4 bg-gray-200 rounded w-16"></div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="h-4 bg-gray-200 rounded w-20"></div>
+                      </td>
+                    </tr>
+                  ))
+                ) : filteredData.length > 0 ? (
+                  filteredData.map((item, index) => (
                     <tr
-                      key={item.id}
+                      key={item.id || index}
                       className="hover:bg-gray-50/70 transition-colors"
                     >
                       <td className="px-6 py-4 font-mono text-xs text-gray-500">
-                        {item.id}
+                        {index + 1}
                       </td>
-                      <td className="px-6 py-4 text-gray-600">{item.waktu}</td>
+                      <td className="px-6 py-4 text-gray-600">
+                        {formatTimestamp(item.timestamp)}
+                      </td>
                       <td className="px-6 py-4">
                         <span
                           className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -186,22 +258,27 @@ export default function RiwayatSampah() {
                         </span>
                       </td>
                       <td className="px-6 py-4 font-medium">
-                        {item.jumlah} Item
+                        {formatConfidence(item.confidence)}
                       </td>
-                      <td className="px-6 py-4 text-gray-500 flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                        Dipilah (Servo {item.jenis === "Organik" ? "0°" : "90°"}
-                        )
+                      <td className="px-6 py-4 text-gray-500 font-mono text-xs">
+                        {item.binId || "-"}
+                      </td>
+                      <td className="px-6 py-4 text-gray-500 text-xs">
+                        {item.source === "esp32cam_http"
+                          ? "📷 ESP32-CAM"
+                          : "📡 MQTT"}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
                     <td
-                      colSpan="5"
+                      colSpan="6"
                       className="px-6 py-10 text-center text-gray-400"
                     >
-                      Tidak ada data log sampah yang ditemukan.
+                      {riwayatData.length === 0
+                        ? "Tidak ada data sampah pada tanggal ini."
+                        : "Tidak ada data yang cocok dengan filter."}
                     </td>
                   </tr>
                 )}

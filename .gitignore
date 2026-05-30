@@ -75,3 +75,5 @@ venv/
 env/
 .env/
 
+# Uploaded images / camera captures
+server/uploads/

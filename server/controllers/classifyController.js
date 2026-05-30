@@ -51,6 +51,20 @@ const classifyController = {
         `Received image for classification: ${imageBuffer.length} bytes`,
       );
 
+      // Save image to server/uploads/latest.jpg for web dashboard visualization
+      try {
+        const fs = require("fs");
+        const path = require("path");
+        const uploadsDir = path.join(__dirname, "..", "uploads");
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+        fs.writeFileSync(path.join(uploadsDir, "latest.jpg"), imageBuffer);
+        logger.success("Latest camera image saved to local disk!");
+      } catch (saveError) {
+        logger.error("Failed to save image to disk (non-critical)", saveError);
+      }
+
       // Check if model is ready
       if (!classificationService.isReady) {
         return res.status(503).json({
