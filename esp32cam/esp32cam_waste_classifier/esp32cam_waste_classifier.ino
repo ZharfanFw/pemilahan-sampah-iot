@@ -28,11 +28,11 @@
 // ============================================================================
 
 // WiFi credentials
-const char* WIFI_SSID     = "Workshop FPMIPA 5G";      // ← Ganti dengan SSID WiFi
-const char* WIFI_PASSWORD = "bengkelmipa";   // ← Ganti dengan password WiFi
+const char* WIFI_SSID     = "SSID";      // ← Ganti dengan SSID WiFi
+const char* WIFI_PASSWORD = "PASSWORD";   // ← Ganti dengan password WiFi
 
 // Server configuration
-const char* SERVER_IP   = "192.168.0.227";   // ← Ganti dengan IP server Node.js
+const char* SERVER_IP   = "IPLOKAL";   // ← Ganti dengan IP server Node.js
 const int   SERVER_PORT = 3000;
 const char* BIN_ID      = "bin-001";
 
@@ -44,7 +44,7 @@ const char* BIN_ID      = "bin-001";
 
 // Timing
 #define SERVO_HOLD_MS   3000   // Berapa lama servo di posisi pemilahan (ms)
-#define CAPTURE_DELAY   5000   // Delay antar capture (ms)
+#define CAPTURE_DELAY   1000   // Delay antar capture (ms) - Nyala terus menerus
 
 // Button (optional, set ke -1 jika tidak pakai)
 #define BUTTON_PIN      13     // GPIO untuk push button trigger
@@ -92,9 +92,9 @@ void setup() {
   Serial.println("   ESP32-CAM + MobileNetV2");
   Serial.println("===================================\n");
 
-  // Init LED
+  // Init LED (nyala terus menerus untuk menerangi objek)
   pinMode(LED_FLASH, OUTPUT);
-  digitalWrite(LED_FLASH, LOW);
+  digitalWrite(LED_FLASH, HIGH);
 
   // Init button (optional)
   if (USE_BUTTON && BUTTON_PIN >= 0) {
@@ -200,9 +200,9 @@ void initCamera() {
   // Gunakan QVGA untuk kecepatan, atau VGA untuk kualitas lebih baik
   // Model akan resize ke 224x224 di server
   if (psramFound()) {
-    config.frame_size   = FRAMESIZE_QVGA;     // 640x480
-    config.jpeg_quality = 15;                // 0-63 (lower = better quality)
-    config.fb_count     = 2;
+    config.frame_size   = FRAMESIZE_CIF;     // 640x480
+    config.jpeg_quality = 10;                // 0-63 (lower = better quality)
+    config.fb_count     = 1;
     Serial.println("   PSRAM found → VGA mode (640x480)");
   } else {
     config.frame_size   = FRAMESIZE_QVGA;    // 320x240
@@ -275,10 +275,8 @@ void classifyAndSort() {
 
   Serial.printf("   Image size: %d bytes (%dx%d)\n", fb->len, fb->width, fb->height);
 
-  // 2. Flash LED during capture (brief)
-  digitalWrite(LED_FLASH, HIGH);
-  delay(100);
-  digitalWrite(LED_FLASH, LOW);
+  // 2. Flash LED stays ON continuously, no need to toggle
+  delay(50); // Small delay for camera exposure adjustment if needed
 
   // 3. Send to server
   String result = sendImageToServer(fb->buf, fb->len);

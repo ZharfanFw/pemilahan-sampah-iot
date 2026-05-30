@@ -43,33 +43,49 @@ sys.modules['tensorflow.python.training.tracking.data_structures'] = data_struct
 
 
 def convert_keras_to_tfjs(model_path: str, output_dir: str) -> None:
-    """Convert a Keras .h5 model to TensorFlow.js format."""
-    import tensorflowjs.converters.keras_h5_conversion as khc
-    khc._check_version = lambda h5file: None
+    """Convert a Keras .h5 model to TensorFlow.js Graph Model format."""
     import tensorflowjs as tfjs
     import tensorflow as tf
+    import shutil
 
-    print(f"📦 Loading model from: {model_path}")
+    print(f"[Model] Loading model from: {model_path}")
     model = tf.keras.models.load_model(model_path)
     model.summary()
+
+    # Save to temporary SavedModel first (bypasses Keras 3 save_format='tf' bugs)
+    temp_savedmodel = os.path.join(output_dir, "temp_savedmodel")
+    if os.path.exists(temp_savedmodel):
+        shutil.rmtree(temp_savedmodel)
+    
+    print(f"[Model] Saving to temporary TF SavedModel...")
+    tf.saved_model.save(model, temp_savedmodel)
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    print(f"\n🔄 Converting to TensorFlow.js format...")
+    print(f"\n[Model] Converting to TensorFlow.js Graph Model format...")
     print(f"   Output directory: {output_dir}")
 
-    tfjs.converters.save_keras_model(model, output_dir)
+    from tensorflowjs.converters.converter import convert
+    convert([
+        "--input_format=tf_saved_model",
+        "--output_format=tfjs_graph_model",
+        temp_savedmodel,
+        output_dir
+    ])
+
+    # Clean up temporary SavedModel
+    shutil.rmtree(temp_savedmodel, ignore_errors=True)
 
     # List output files
-    print(f"\n✅ Conversion complete! Output files:")
+    print(f"\n[Model] Conversion complete! Output files:")
     for f in sorted(os.listdir(output_dir)):
         size = os.path.getsize(os.path.join(output_dir, f))
         size_str = f"{size / 1024:.1f} KB" if size < 1024 * 1024 else f"{size / (1024*1024):.1f} MB"
-        print(f"   📄 {f} ({size_str})")
+        print(f"    {f} ({size_str})")
 
-    print(f"\n💡 To use in Node.js:")
-    print(f'   const model = await tf.loadLayersModel("file://{os.path.abspath(output_dir)}/model.json");')
+    print(f"\n[Model] To use in Node.js:")
+    print(f'   const model = await tf.loadGraphModel("file://{os.path.abspath(output_dir)}/model.json");')
 
 
 def main():
