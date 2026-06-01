@@ -66,6 +66,7 @@ const char* BIN_ID      = "bin-001";
 // Timing
 #define TRIGGER_COOLDOWN 3000  // Cooldown setelah deteksi (ms)
 #define SCAN_INTERVAL    200   // Interval polling IR sensor (ms)
+#define DETECT_DELAY_MS  3000   // Delay dari saat IR mendeteksi objek hingga kamera memotret (ms)
 
 // LED
 #define LED_FLASH       4      // Built-in flash LED
@@ -178,6 +179,13 @@ void loop() {
   // Cek IR sensor: ada objek di depan kamera?
   if (checkObjectPresence()) {
     Serial.println("\n🔔 OBJEK TERDETEKSI oleh IR sensor!");
+    
+    // Berikan jeda agar objek stabil/berhenti bergerak di depan kamera sebelum difoto
+    if (DETECT_DELAY_MS > 0) {
+      Serial.printf("⏳ Menunggu %.1f detik agar objek stabil...\n", DETECT_DELAY_MS / 1000.0);
+      delay(DETECT_DELAY_MS);
+    }
+
     lastTriggerTime = millis();
 
     // 1. Capture + classify + servo
