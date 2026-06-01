@@ -457,7 +457,18 @@ void connectWiFi() {
 // ============================================================================
 
 void classifyAndSort() {
-  // 1. Capture image
+  // 1. Bersihkan buffer kamera (Buang frame usang/stale yang mengendap di DMA memori)
+  // Kita melakukan capture dan langsung mengembalikannya untuk memicu sensor mengambil frame baru
+  camera_fb_t *fbTemp = esp_camera_fb_get();
+  if (fbTemp) {
+    esp_camera_fb_return(fbTemp);
+    fbTemp = NULL;
+  }
+  
+  // Berikan delay sangat singkat (100ms) agar sensor kamera sempat menyesuaikan pencahayaan/eksposur otomatis
+  delay(100);
+
+  // 2. Capture image yang sesungguhnya (Fresh Frame!)
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) {
     Serial.println("❌ Camera capture failed!");
@@ -465,9 +476,6 @@ void classifyAndSort() {
   }
 
   Serial.printf("   Image size: %d bytes (%dx%d)\n", fb->len, fb->width, fb->height);
-
-  // 2. Small delay for exposure
-  delay(50);
 
   // 3. Send to server
   String result = sendImageToServer(fb->buf, fb->len);
