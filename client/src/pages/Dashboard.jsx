@@ -111,7 +111,11 @@ export default function Dashboard() {
   }, [fetchData]);
 
   // Derived state
-  const capacity = binStatus?.status?.kapasitas_persen ?? 0;
+  const capacityOrganik = binStatus?.status?.level_organik ?? 0;
+  const capacityAnorganik = binStatus?.status?.level_anorganik ?? 0;
+  const distOrganik = binStatus?.status?.jarak_organik ?? -1;
+  const distAnorganik = binStatus?.status?.jarak_anorganik ?? -1;
+  const capacity = binStatus?.status?.kapasitas_persen ?? Math.max(capacityOrganik, capacityAnorganik);
   const isOnline = binStatus?.status?.is_online ?? false;
   const isBinFull = capacity >= 90;
 
@@ -298,23 +302,55 @@ export default function Dashboard() {
 
               {/* WIDGET KAPASITAS */}
               <article
-                className={`bg-white p-6 rounded-xl border shadow-sm flex flex-col items-center justify-center relative overflow-hidden transition-colors ${isBinFull ? "border-red-400 bg-red-50" : "border-gray-200"}`}
+                className={`bg-white p-6 rounded-xl border shadow-sm flex flex-col justify-between transition-all duration-300 ${isBinFull ? "border-red-400 bg-red-50/50" : "border-gray-200"}`}
               >
-                <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
-                  Kapasitas Bin
-                </h3>
-                <p
-                  className={`text-3xl font-bold mt-2 ${isBinFull ? "text-red-600" : "text-blue-600"}`}
-                >
-                  {capacity}%
-                </p>
+                <div className="w-full flex justify-between items-center mb-2">
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
+                    Kapasitas Bin
+                  </h3>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${isBinFull ? "bg-red-200 text-red-800 animate-pulse" : "bg-gray-100 text-gray-600"}`}>
+                    Max: {capacity}%
+                  </span>
+                </div>
 
-                {/* Indikator Bar Dinamis di bawah widget */}
-                <div className="absolute bottom-0 left-0 w-full h-1.5 bg-gray-100">
-                  <div
-                    className={`h-full transition-all duration-500 ease-in-out ${isBinFull ? "bg-red-500" : "bg-blue-500"}`}
-                    style={{ width: `${capacity}%` }}
-                  ></div>
+                <div className="flex-1 flex flex-col justify-center space-y-4">
+                  {/* Progress Bar Organik */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs font-semibold">
+                      <span className="text-green-600 flex items-center gap-1">
+                        <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block animate-pulse"></span>
+                        Organik
+                      </span>
+                      <span className="text-gray-700">
+                        {capacityOrganik}% {distOrganik > 0 ? `(${distOrganik} cm)` : ""}
+                      </span>
+                    </div>
+                    <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
+                      <div
+                        className="h-full bg-green-500 rounded-full transition-all duration-500 ease-in-out"
+                        style={{ width: `${capacityOrganik}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  {/* Progress Bar Anorganik */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs font-semibold">
+                      <span className="text-blue-600 flex items-center gap-1">
+                        <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block animate-pulse"></span>
+                        Anorganik
+                      </span>
+                      <span className="text-gray-700">
+                        {capacityAnorganik}% {distAnorganik > 0 ? `(${distAnorganik} cm)` : ""}
+                      </span>
+                    </div>
+                    <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all duration-500 ease-in-out"
+                        style={{ width: `${capacityAnorganik}%` }}
+                      ></div>
+                    </div>
+                  </div>
                 </div>
               </article>
 
