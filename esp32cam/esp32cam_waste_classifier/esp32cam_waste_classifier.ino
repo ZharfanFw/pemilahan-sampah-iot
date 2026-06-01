@@ -55,8 +55,12 @@ const char* BIN_ID      = "bin-001";
 #define IR_SENSOR_PIN   13     // OUT pin IR sensor (LOW = ada objek terdeteksi)
 
 // Ultrasonik HC-SR04 (kedalaman bin)
-#define TRIG_PIN        14     // Shared TRIG untuk kedua sensor
+// ⚠️ PENTING: GPIO 16 adalah pin internal PSRAM pada AI-Thinker ESP32-CAM!
+//    Jangan gunakan GPIO 16 sebagai GPIO eksternal — akan merusak PSRAM, WiFi, dan kamera.
+//    Kedua sensor menggunakan TRIG yang sama (GPIO 14) karena diukur secara bergantian.
+#define TRIG_ORGANIK    14     // TRIG sensor bin Organik (shared dengan Anorganik)
 #define ECHO_ORGANIK    15     // ECHO sensor bin Organik
+#define TRIG_ANORGANIK  14     // TRIG sensor bin Anorganik (shared dengan Organik, aman karena sequential)
 #define ECHO_ANORGANIK  2      // ECHO sensor bin Anorganik
 
 // Parameter fisik bin
@@ -66,7 +70,8 @@ const char* BIN_ID      = "bin-001";
 // Timing
 #define TRIGGER_COOLDOWN 3000  // Cooldown setelah deteksi (ms)
 #define SCAN_INTERVAL    200   // Interval polling IR sensor (ms)
-#define DETECT_DELAY_MS  3000   // Delay dari saat IR mendeteksi objek hingga kamera memotret (ms)
+#define DETECT_DELAY_MS  5000  // Delay dari saat IR mendeteksi objek hingga kamera memotret (5 detik)
+#define ULTRASONIC_INTERVAL_MS 3000 // Interval cek kedalaman bin secara real-time (ms)
 
 // LED
 #define LED_FLASH       4      // Built-in flash LED
@@ -98,7 +103,8 @@ const char* BIN_ID      = "bin-001";
 
 Servo servo;
 bool cameraReady = false;
-unsigned long lastTriggerTime = 0;  // Untuk cooldown
+unsigned long lastTriggerTime = 0;    // Untuk cooldown
+unsigned long lastUltrasonicTime = 0; // Untuk interval ultrasonik real-time
 
 // ============================================================================
 // Setup
@@ -120,14 +126,17 @@ void setup() {
   Serial.println("🔴 IR sensor initialized (GPIO " + String(IR_SENSOR_PIN) + ")");
 
   // Init ultrasonic pins
-  pinMode(TRIG_PIN, OUTPUT);
-  digitalWrite(TRIG_PIN, LOW);
+  pinMode(TRIG_ORGANIK, OUTPUT);
+  digitalWrite(TRIG_ORGANIK, LOW);
   pinMode(ECHO_ORGANIK, INPUT);
+  
+  pinMode(TRIG_ANORGANIK, OUTPUT);
+  digitalWrite(TRIG_ANORGANIK, LOW);
   pinMode(ECHO_ANORGANIK, INPUT);
+  
   Serial.println("📏 Ultrasonic sensors initialized");
-  Serial.println("   TRIG (shared): GPIO " + String(TRIG_PIN));
-  Serial.println("   ECHO Organik : GPIO " + String(ECHO_ORGANIK));
-  Serial.println("   ECHO Anorganik: GPIO " + String(ECHO_ANORGANIK));
+  Serial.println("   Organik   -> TRIG: GPIO " + String(TRIG_ORGANIK) + ", ECHO: GPIO " + String(ECHO_ORGANIK));
+  Serial.println("   Anorganik -> TRIG: GPIO " + String(TRIG_ANORGANIK) + ", ECHO: GPIO " + String(ECHO_ANORGANIK));
 
   // Init servo
   servo.attach(SERVO_PIN);
@@ -142,8 +151,8 @@ void setup() {
 
   // Ukur bin level awal
   Serial.println("\n📏 Pengukuran awal level bin...");
-  float distOrganik = measureDistance(ECHO_ORGANIK);
-  float distAnorganik = measureDistance(ECHO_ANORGANIK);
+  float distOrganik = measureDistance(TRIG_ORGANIK, ECHO_ORGANIK);
+  float distAnorganik = measureDistance(TRIG_ANORGANIK, ECHO_ANORGANIK);
   Serial.printf("   Organik  : %.1f cm\n", distOrganik);
   Serial.printf("   Anorganik: %.1f cm\n", distAnorganik);
 
@@ -170,7 +179,14 @@ void loop() {
     connectWiFi();
   }
 
-  // Check cooldown
+  // 1. Cek kedalaman bin secara real-time (setiap ULTRASONIC_INTERVAL_MS)
+  if (millis() - lastUltrasonicTime >= ULTRASONIC_INTERVAL_MS) {
+    lastUltrasonicTime = millis();
+    Serial.println("📏 Mengukur kedalaman bin secara real-time...");
+    measureAndSendBinLevels();
+  }
+
+  // Check cooldown untuk deteksi objek IR
   if (millis() - lastTriggerTime < TRIGGER_COOLDOWN) {
     delay(SCAN_INTERVAL);
     return;
@@ -180,21 +196,21 @@ void loop() {
   if (checkObjectPresence()) {
     Serial.println("\n🔔 OBJEK TERDETEKSI oleh IR sensor!");
     
-    // Berikan jeda agar objek stabil/berhenti bergerak di depan kamera sebelum difoto
+    // Berikan jeda waktu (DETECT_DELAY_MS = 5000) agar objek stabil & tangan menjauh sebelum difoto
     if (DETECT_DELAY_MS > 0) {
-      Serial.printf("⏳ Menunggu %.1f detik agar objek stabil...\n", DETECT_DELAY_MS / 1000.0);
+      Serial.printf("⏳ Menunggu %.1f detik agar objek stabil & tangan menjauh...\n", DETECT_DELAY_MS / 1000.0);
       delay(DETECT_DELAY_MS);
     }
 
     lastTriggerTime = millis();
 
-    // 1. Capture + classify + servo
+    // 2. Capture + classify + servo
     Serial.println("📸 Capturing image...");
     classifyAndSort();
 
-    // 2. Setelah servo kembali netral, ukur kedalaman bin
-    Serial.println("📏 Mengukur kedalaman bin...");
+    // 3. Segera setelah klasifikasi, ukur kedalaman sekali lagi untuk mengupdate level bin
     measureAndSendBinLevels();
+    lastUltrasonicTime = millis(); // Reset timer ultrasonik agar tidak bertabrakan langsung
 
     Serial.println("⏳ Cooldown " + String(TRIGGER_COOLDOWN / 1000) + " detik...\n");
   }
@@ -220,20 +236,21 @@ bool checkObjectPresence() {
 
 /**
  * Mengukur jarak menggunakan sensor ultrasonik HC-SR04.
- * Menggunakan shared TRIG pin (GPIO 14) dan echo pin yang ditentukan.
+ * Menggunakan trig pin dan echo pin yang ditentukan.
  *
+ * @param trigPin - Pin TRIG sensor yang ingin dibaca
  * @param echoPin - Pin ECHO sensor yang ingin dibaca
  * @return Jarak dalam cm, atau -1 jika timeout/error
  */
-float measureDistance(int echoPin) {
+float measureDistance(int trigPin, int echoPin) {
   // Pastikan TRIG LOW dulu
-  digitalWrite(TRIG_PIN, LOW);
+  digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
 
   // Kirim pulse 10µs
-  digitalWrite(TRIG_PIN, HIGH);
+  digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
+  digitalWrite(trigPin, LOW);
 
   // Baca durasi echo (timeout 30ms = ~500cm max)
   long duration = pulseIn(echoPin, HIGH, 30000);
@@ -258,12 +275,12 @@ float measureDistance(int echoPin) {
  * Hitung rata-rata dari beberapa pengukuran untuk akurasi lebih baik.
  * Mengambil 3 sampel dan mengembalikan median.
  */
-float measureDistanceAvg(int echoPin) {
+float measureDistanceAvg(int trigPin, int echoPin) {
   float readings[3];
   int validCount = 0;
 
   for (int i = 0; i < 3; i++) {
-    float d = measureDistance(echoPin);
+    float d = measureDistance(trigPin, echoPin);
     if (d > 0) {
       readings[validCount++] = d;
     }
@@ -295,8 +312,8 @@ float measureDistanceAvg(int echoPin) {
  * Mengukur kedalaman kedua bin dan mengirim data level ke server.
  */
 void measureAndSendBinLevels() {
-  float distOrganik = measureDistanceAvg(ECHO_ORGANIK);
-  float distAnorganik = measureDistanceAvg(ECHO_ANORGANIK);
+  float distOrganik = measureDistanceAvg(TRIG_ORGANIK, ECHO_ORGANIK);
+  float distAnorganik = measureDistanceAvg(TRIG_ANORGANIK, ECHO_ANORGANIK);
 
   // Hitung persentase kepenuhan
   float levelOrganik = 0;
