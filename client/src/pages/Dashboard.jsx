@@ -42,7 +42,7 @@ export default function Dashboard() {
   const [isScanning, setIsScanning] = useState(false);
   const [showResult, setShowResult] = useState(false);
 
-  const [isCameraOffline, setIsCameraOffline] = useState(false); // Default false: tampilkan kamera
+  const isCameraOffline = binStatus?.status?.is_online === true ? false : true;
   const [imgTimestamp, setImgTimestamp] = useState(Date.now());
 
   // Fetch data dari API backend
@@ -408,7 +408,7 @@ export default function Dashboard() {
 
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-bold text-gray-800">
-                    Kamera Deteksi AI (Real-time)
+                    Tangkapan Kamera
                   </h3>
 
                   {/* ✅ PERBAIKAN: Indikator Status Dinamis */}
@@ -433,14 +433,6 @@ export default function Dashboard() {
                     className={`w-full h-full object-cover transition-all duration-300 ${
                       isCameraOffline ? "opacity-0 absolute pointer-events-none" : "opacity-100"
                     }`}
-                    onLoad={(e) => {
-                      if (e.target.src.includes(`${window.location.hostname}:3000`)) {
-                        setIsCameraOffline(false);
-                      }
-                    }}
-                    onError={() => {
-                      setIsCameraOffline(true);
-                    }}
                   />
 
                   {/* Placeholder overlay ketika offline */}

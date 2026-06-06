@@ -110,6 +110,7 @@ function connect() {
     }
 
     // 2. TOPIK: status (online dari ESP32-CAM)
+    // 2. TOPIK: status (online dari ESP32-CAM)
     if (topic === MQTT_CONFIG.topics.status) {
       try {
         const payload = JSON.parse(message.toString());
@@ -117,13 +118,14 @@ function connect() {
 
         const { binId = "bin-001", is_online = false } = payload;
 
-        if (is_online) {
-          await updateData(`bins/${binId}/status`, {
-            is_online: true,
-            lastUpdate: Date.now()
-          });
-          logger.info(`✅ [MQTT] Status online bin ${binId} diperbarui: true`);
-        }
+        // Hilangkan pengecekan if (is_online) agar 'false' juga ikut tersimpan
+        await updateData(`bins/${binId}/status`, {
+          is_online: is_online, // Simpan nilai asli (true atau false)
+          lastUpdate: Date.now()
+        });
+        
+        logger.info(`✅ [MQTT] Status online bin ${binId} diperbarui: ${is_online}`);
+        
       } catch (error) {
         console.error("❌ Error parsing status MQTT message:", error);
       }
