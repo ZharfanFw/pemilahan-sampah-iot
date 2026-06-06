@@ -124,17 +124,25 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
   if (jenis == "Organik")
   {
     Serial.println("   🟢 Servo → ORGANIK");
+    servo.attach(SERVO_PIN);
     servo.write(SERVO_ORGANIK);
+    delay(SERVO_HOLD_MS);
+    servo.write(SERVO_NETRAL);
+    delay(500); // Beri waktu servo kembali ke posisi netral
+    servo.detach();
+    Serial.println("   ⬜ Servo → NETRAL & Detached");
   }
   else if (jenis == "Anorganik")
   {
     Serial.println("   🔴 Servo → ANORGANIK");
+    servo.attach(SERVO_PIN);
     servo.write(SERVO_ANORGANIK);
+    delay(SERVO_HOLD_MS);
+    servo.write(SERVO_NETRAL);
+    delay(500); // Beri waktu servo kembali ke posisi netral
+    servo.detach();
+    Serial.println("   ⬜ Servo → NETRAL & Detached");
   }
-
-  delay(SERVO_HOLD_MS);
-  servo.write(SERVO_NETRAL);
-  Serial.println("   ⬜ Servo → NETRAL");
 
   Serial.println("   📏 Mengukur kedalaman bin setelah sampah masuk...");
   measureAndSendBinLevels();
@@ -272,7 +280,9 @@ void setup() {
   // Init servo
   servo.attach(SERVO_PIN);
   servo.write(SERVO_NETRAL);
-  Serial.println("🔧 Servo initialized (netral: " + String(SERVO_NETRAL) + "°)");
+  delay(500);
+  servo.detach();
+  Serial.println("🔧 Servo initialized (netral: " + String(SERVO_NETRAL) + "° & detached)");
 
   // Init camera
   initCamera();
@@ -318,19 +328,33 @@ void loop() {
   }
 
   // Check WiFi connection
+  static unsigned long disconnectTime = 0;
   if (WiFi.status() != WL_CONNECTED) {
-    unsigned long now = millis();
-    if (now - lastWiFiReconnectAttempt > 10000) { // Coba hubungkan kembali setiap 10 detik
-      lastWiFiReconnectAttempt = now;
-      Serial.println("⚠️ WiFi terputus. Menghubungkan kembali secara non-blocking...");
+    if (disconnectTime == 0) {
+      disconnectTime = millis();
+    }
+    
+    // Tampilkan log status setiap 5 detik
+    static unsigned long lastLogTime = 0;
+    if (millis() - lastLogTime > 5000) {
+      lastLogTime = millis();
+      Serial.printf("⚠️ WiFi terputus (Sudah %d detik). Menunggu auto-reconnect...\n", (millis() - disconnectTime) / 1000);
+    }
+    
+    // Jika terputus terus selama > 45 detik, lakukan hard reset koneksi WiFi
+    if (millis() - disconnectTime > 45000) {
+      Serial.println("🔄 Sudah 45 detik terputus. Melakukan hard reset koneksi WiFi...");
       WiFi.disconnect(true);
-      delay(100);
+      delay(500);
       WiFi.mode(WIFI_STA);
       WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
       WiFi.setSleep(false);
+      disconnectTime = millis(); // Reset timer
     }
     delay(SCAN_INTERVAL);
     return; // Keluar dari loop karena koneksi terputus
+  } else {
+    disconnectTime = 0; // Reset timer jika WiFi terhubung
   }
 
   // Check cooldown
@@ -342,26 +366,13 @@ void loop() {
   // ── 3. Cek IR sensor: ada objek di depan kamera? ──
   if (checkObjectPresence()) {
     Serial.println("\n🔔 OBJEK TERDETEKSI oleh IR sensor!");
-    
-    // Countdown 3 detik sebelum mengambil foto
-    for (int i = 3; i > 0; i--) {
-      Serial.printf("⏳ Mengambil foto dalam %d detik...\n", i);
-      delay(1000);
-      mqttClient.loop(); // Tetap proses MQTT selama countdown
-    }
-    
-    // Capture dilakukan HANYA jika objek masih ada di depan sensor setelah delay 3 detik
-    if (checkObjectPresence()) {
-      lastTriggerTime = millis();
+    lastTriggerTime = millis();
 
-      // Capture + classify + servo
-      Serial.println("📸 Capturing image...");
-      classifyAndSort();
+    // Capture + classify + servo
+    Serial.println("📸 Mengambil foto sekarang...");
+    classifyAndSort();
 
-      Serial.println("⏳ Cooldown " + String(TRIGGER_COOLDOWN / 1000) + " detik...\n");
-    } else {
-      Serial.println("ℹ️ Pengambilan foto dibatalkan: Objek sudah tidak ada di depan sensor.");
-    }
+    Serial.println("⏳ Cooldown " + String(TRIGGER_COOLDOWN / 1000) + " detik...\n");
   }
 
   if (!mqttClient.connected())
