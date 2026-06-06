@@ -121,31 +121,40 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
   deserializeJson(doc, message);
   String jenis = doc["jenis"] | "Unknown";
 
+  bool knownType = true;
   if (jenis == "Organik")
   {
     Serial.println("   🟢 Servo → ORGANIK");
     servo.attach(SERVO_PIN);
     servo.write(SERVO_ORGANIK);
-    delay(SERVO_HOLD_MS);
-    servo.write(SERVO_NETRAL);
-    delay(500); // Beri waktu servo kembali ke posisi netral
-    servo.detach();
-    Serial.println("   ⬜ Servo → NETRAL & Detached");
   }
   else if (jenis == "Anorganik")
   {
     Serial.println("   🔴 Servo → ANORGANIK");
     servo.attach(SERVO_PIN);
     servo.write(SERVO_ANORGANIK);
+  }
+  else
+  {
+    Serial.println("   ⚪ Tipe tidak dikenal, servo tetap netral");
+    knownType = false;
+  }
+
+  if (knownType)
+  {
+    // Tunggu servo membuka kompartemen (3 detik) agar sampah masuk
     delay(SERVO_HOLD_MS);
+
+    // Cek kedalaman sampah menggunakan sensor ultrasonik saat servo masih terbuka
+    Serial.println("   📏 Mengukur kedalaman bin saat servo terbuka...");
+    measureAndSendBinLevels();
+
+    // Kembalikan servo ke default (netral)
     servo.write(SERVO_NETRAL);
     delay(500); // Beri waktu servo kembali ke posisi netral
     servo.detach();
     Serial.println("   ⬜ Servo → NETRAL & Detached");
   }
-
-  Serial.println("   📏 Mengukur kedalaman bin setelah sampah masuk...");
-  measureAndSendBinLevels();
 }
 
 unsigned long lastMqttReconnectAttempt = 0;
@@ -188,63 +197,6 @@ void reconnectMQTT()
     Serial.print(" Gagal, rc=");
     Serial.print(mqttClient.state());
     Serial.println(" Coba lagi dalam 5 detik...");
-  }
-}
-
-void mqttCallback(char *topic, byte *payload, unsigned int length)
-{
-  String message;
-  for (int i = 0; i < length; i++)
-  {
-    message += (char)payload[i];
-  }
-
-  Serial.println("\n📥 [MQTT] Pesan masuk di topik: " + String(topic));
-  Serial.println("   Payload: " + message);
-
-  // Parse JSON
-  JsonDocument doc;
-  deserializeJson(doc, message);
-  String jenis = doc["jenis"] | "Unknown";
-
-  if (jenis == "Organik")
-  {
-    Serial.println("   🟢 Servo → ORGANIK");
-    servo.write(SERVO_ORGANIK);
-  }
-  else if (jenis == "Anorganik")
-  {
-    Serial.println("   🔴 Servo → ANORGANIK");
-    servo.write(SERVO_ANORGANIK);
-  }
-
-  delay(SERVO_HOLD_MS);
-  servo.write(SERVO_NETRAL);
-  Serial.println("   ⬜ Servo → NETRAL");
-
-  Serial.println("   📏 Mengukur kedalaman bin setelah sampah masuk...");
-  measureAndSendBinLevels();
-}
-
-void reconnectMQTT()
-{
-  while (!mqttClient.connected())
-  {
-    Serial.print("🔄 Menghubungkan ke MQTT Broker...");
-    // Gunakan BIN_ID sebagai Client ID yang unik
-    if (mqttClient.connect(BIN_ID))
-    {
-      Serial.println(" Berhasil!");
-      // ESP32 mendengarkan perintah servo dari Node.js
-      mqttClient.subscribe("smartbin/kontrol/servo");
-    }
-    else
-    {
-      Serial.print(" Gagal, rc=");
-      Serial.print(mqttClient.state());
-      Serial.println(" Coba lagi dalam 5 detik...");
-      delay(5000);
-    }
   }
 }
 
@@ -365,7 +317,15 @@ void loop() {
 
   // ── 3. Cek IR sensor: ada objek di depan kamera? ──
   if (checkObjectPresence()) {
-    Serial.println("\n🔔 OBJEK TERDETEKSI oleh IR sensor!");
+    Serial.println("\n🔔 OBJEK TERDETEKSI oleh IR sensor! Mengirim sinyal ke kamera...");
+    
+    // Timer 3 detik sebelum kamera capture
+    for (int i = 3; i > 0; i--) {
+      Serial.printf("⏳ Mengambil foto dalam %d detik...\n", i);
+      delay(1000);
+      mqttClient.loop(); // Tetap proses MQTT
+    }
+
     lastTriggerTime = millis();
 
     // Capture + classify + servo
