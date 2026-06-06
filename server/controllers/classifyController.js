@@ -87,14 +87,24 @@ const classifyController = {
         logger.error("Failed to save to Firebase (non-critical)", fbError);
       }
 
-      // Publish to MQTT
+      // Publish ke MQTT → topik kontrol servo ESP32
       try {
         if (mqttService && mqttService.connected) {
+          // Publish ke topik yang di-subscribe ESP32 untuk menggerakkan servo
+          mqttService.publish("smartbin/kontrol/servo", {
+            jenis: result.jenis,
+            confidence: result.confidence,
+            binId,
+            timestamp,
+          });
+
+          // Publish juga ke topik classification untuk logging/dashboard
           mqttService.publish("smartbin/classification", {
             jenis: result.jenis,
             confidence: result.confidence,
             binId,
             timestamp,
+            source: "esp32cam_http",
           });
         }
       } catch (mqttError) {

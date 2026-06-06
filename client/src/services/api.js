@@ -5,7 +5,7 @@
  * Semua request menyertakan JWT token dari localStorage.
  */
 
-const API_BASE_URL = "http://127.0.0.1:3000/api";
+const API_BASE_URL = `http://${window.location.hostname}:3000/api`;
 
 /**
  * Helper untuk melakukan fetch dengan authorization header.
@@ -95,7 +95,7 @@ export async function getWasteStats(period = "today", binId = "bin-001") {
  */
 export async function getServerHealth() {
   try {
-    const response = await fetch(`http://127.0.0.1:3000/`);
+    const response = await fetch(`http://${window.location.hostname}:3000/`);
     return { online: response.ok };
   } catch {
     return { online: false };

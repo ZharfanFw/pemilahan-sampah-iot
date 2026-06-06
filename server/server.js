@@ -20,6 +20,10 @@ const wasteRoutes = require("./routes/waste");
 // Import Classification Service
 const classificationService = require("./services/classificationService");
 
+// Import MQTT Broker (Aedes) & Client Service
+const { startBroker } = require("./config/aedesBroker");
+const mqttService = require("./services/mqttService");
+
 // Gunakan Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/classify", classifyRoutes);
@@ -34,9 +38,16 @@ app.get("/", (req, res) => {
 // Jalankan Server & Load AI
 app.listen(PORT, async () => {
   console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
-  console.log("🤖 Memulai load model AI di worker thread...");
 
-  // Tidak perlu setTimeout — worker thread tidak memblokir login/dashboard
+  // 1. Jalankan MQTT Broker lokal (Aedes) terlebih dahulu
+  await startBroker();
+
+  // 2. Baru hubungkan MQTT Client (mqttService) ke broker lokal
+  mqttService.connect();
+  console.log("📡 MQTT Client connecting to local Aedes broker...");
+
+  // 3. Load model AI
+  console.log("🤖 Memulai load model AI di worker thread...");
   await classificationService.loadModel();
   console.log("✅ Worker thread siap!");
 });

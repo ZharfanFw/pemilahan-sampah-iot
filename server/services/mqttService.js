@@ -35,13 +35,19 @@ class MQTTService {
     });
 
     this.client.on("message", async (topic, message) => {
+      const msgStr = message.toString().trim();
+      if (!msgStr) {
+        logger.warning(`Received empty message on topic: ${topic}`);
+        return;
+      }
+
       try {
-        const payload = JSON.parse(message.toString());
+        const payload = JSON.parse(msgStr);
         logger.mqtt(`Received on ${topic}: ${JSON.stringify(payload)}`);
 
         await this.handleMessage(topic, payload);
       } catch (error) {
-        logger.error(`Error parsing message from ${topic}`, error);
+        logger.error(`Error parsing message from ${topic}: ${error.message} (Raw: "${msgStr.substring(0, 100)}")`);
       }
     });
 
@@ -81,8 +87,15 @@ class MQTTService {
         await this.handleStatus(payload, now);
         break;
 
+      case MQTT_CONFIG.topics.sensorLevel:
+        await this.handleSensorLevel(payload, now);
+        break;
+
       default:
-        logger.warning(`Unknown topic: ${topic}`);
+        // Abaikan topik kontrol (server sendiri yang publish)
+        if (topic !== MQTT_CONFIG.topics.kontrolServo) {
+          logger.warning(`Unknown topic: ${topic}`);
+        }
     }
 
     // Update last message timestamp
@@ -167,15 +180,87 @@ class MQTTService {
     try {
       const { servo_position, is_online, binId = "bin-001" } = payload;
 
-      await updateData(`bins/${binId}/status`, {
-        servo_position: parseInt(servo_position),
+      const updatePayload = {
         is_online: Boolean(is_online),
         lastUpdate: timestamp,
-      });
+      };
+
+      if (servo_position !== undefined && servo_position !== null) {
+        const parsed = parseInt(servo_position);
+        if (!isNaN(parsed)) {
+          updatePayload.servo_position = parsed;
+        }
+      }
+
+      await updateData(`bins/${binId}/status`, updatePayload);
 
       logger.info(`System status updated: ${is_online ? "Online" : "Offline"}`);
     } catch (error) {
       logger.error("Error handling status", error);
+    }
+  }
+
+  /**
+   * Handle data level bin dari ESP32 via topik smartbin/sensor/level.
+   * Payload ESP32:
+   * {
+   *   binId, organik_persen, anorganik_persen,
+   *   organik_cm, anorganik_cm, bin_depth_cm
+   * }
+   */
+  async handleSensorLevel(payload, timestamp) {
+    try {
+      const {
+        binId = "bin-001",
+        organik_persen = 0,
+        anorganik_persen = 0,
+        organik_cm = -1,
+        anorganik_cm = -1,
+        bin_depth_cm = 19.5,
+      } = payload;
+
+      // Hitung kapasitas total (ambil yang paling penuh)
+      const kapasitas_persen = Math.max(organik_persen, anorganik_persen);
+
+      // Tentukan status bin
+      let status = "normal";
+      if (kapasitas_persen >= 90) {
+        status = "full";
+      } else if (kapasitas_persen >= 75) {
+        status = "warning";
+      }
+
+      // Update data di Firebase
+      const updatePayload = {
+        kapasitas_persen: parseFloat(kapasitas_persen),
+        level_organik: parseFloat(organik_persen),
+        level_anorganik: parseFloat(anorganik_persen),
+        jarak_organik: parseFloat(organik_cm),
+        jarak_anorganik: parseFloat(anorganik_cm),
+        bin_depth_cm: parseFloat(bin_depth_cm),
+        status,
+        is_online: true,
+        lastUpdate: timestamp,
+      };
+
+      await updateData(`bins/${binId}/status`, updatePayload);
+      logger.success(
+        `[MQTT] Bin level updated for ${binId}: Organik: ${organik_persen}%, Anorganik: ${anorganik_persen}%`
+      );
+
+      // Buat alert jika bin penuh
+      if (status === "full") {
+        let message = "Tempat sampah Organik & Anorganik PENUH!";
+        if (organik_persen >= 90 && anorganik_persen < 90) {
+          message = "Tempat sampah Organik PENUH!";
+        } else if (anorganik_persen >= 90 && organik_persen < 90) {
+          message = "Tempat sampah Anorganik PENUH!";
+        }
+
+        await this.createAlert(binId, "bin_full", message, timestamp);
+      }
+    } catch (error) {
+      logger.error("Error handling sensor level", error);
     }
   }
 
