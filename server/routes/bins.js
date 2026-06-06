@@ -27,4 +27,10 @@ router.get("/status", binController.getStatus);
  */
 router.get("/alerts", binController.getAlerts);
 
+/**
+ * POST /api/bins/level
+ * Mengupdate data kedalaman dan tingkat kepenuhan bin dari ESP32-CAM.
+ */
+router.post("/level", binController.updateLevel);
+
 module.exports = router;

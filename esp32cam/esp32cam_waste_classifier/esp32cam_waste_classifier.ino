@@ -4,17 +4,25 @@
  * Sketch Arduino untuk ESP32-CAM (AI-Thinker board).
  *
  * Fungsi:
- * 1. Capture foto dari kamera OV2640
- * 2. Kirim gambar ke server Node.js via HTTP POST
- * 3. Terima hasil klasifikasi (Organik/Anorganik)
- * 4. Gerakkan servo ke arah yang sesuai
+ * 1. IR sensor mendeteksi objek di depan kamera
+ * 2. Capture foto dari kamera OV2640
+ * 3. Kirim gambar ke server Node.js via HTTP POST
+ * 4. Terima hasil klasifikasi (Organik/Anorganik)
+ * 5. Gerakkan servo ke arah yang sesuai
+ * 6. Ukur kedalaman bin Organik & Anorganik via ultrasonik
+ * 7. Kirim data level bin ke server
  *
  * Wiring:
- * - Servo signal → GPIO 12
- * - (Optional) Push button → GPIO 13
- * - (Optional) LED indicator → GPIO 4 (built-in flash)
+ * - Servo signal       → GPIO 12
+ * - IR sensor OUT      → GPIO 13  (LOW = ada objek)
+ * - HC-SR04 shared TRIG→ GPIO 14
+ * - HC-SR04 #1 ECHO    → GPIO 15  (bin Organik)
+ * - HC-SR04 #2 ECHO    → GPIO 2   (bin Anorganik)
+ * - LED flash (built-in) → GPIO 4
  *
- * Server endpoint: POST http://SERVER_IP:5000/api/classify
+ * Server endpoints:
+ *   POST http://SERVER_IP:3000/api/classify
+ *   POST http://SERVER_IP:3000/api/bins/level
  */
 
 #include "esp_camera.h"
@@ -22,18 +30,20 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
+#include <PubSubClient.h>
 
 // ============================================================================
 // CONFIGURATION - UBAH SESUAI KEBUTUHAN
 // ============================================================================
 
 // WiFi credentials
-const char* WIFI_SSID     = "SSID";      // ← Ganti dengan SSID WiFi
-const char* WIFI_PASSWORD = "PASSWORD";   // ← Ganti dengan password WiFi
+const char* WIFI_SSID     = "cipaa";              // ← Ganti dengan SSID WiFi
+const char* WIFI_PASSWORD = "yanyanyan";   // ← Ganti dengan password WiFi
 
-// Server configuration
-const char* SERVER_IP   = "IPLOKAL";   // ← Ganti dengan IP server Node.js
+// Server configuration (HTTP API + MQTT Broker Aedes di mesin yang sama)
+const char* SERVER_IP   = "10.51.134.197";   // ← Ganti dengan IP server Node.js
 const int   SERVER_PORT = 3000;
+const int   MQTT_PORT   = 1883;               // Port broker Aedes di server
 const char* BIN_ID      = "bin-001";
 
 // Servo configuration
@@ -41,17 +51,29 @@ const char* BIN_ID      = "bin-001";
 #define SERVO_ORGANIK   0      // Posisi servo untuk sampah Organik (derajat)
 #define SERVO_ANORGANIK 180    // Posisi servo untuk sampah Anorganik (derajat)
 #define SERVO_NETRAL    90     // Posisi servo netral/tengah
+#define SERVO_HOLD_MS   3000   // Berapa lama servo di posisi pemilahan (ms)
+
+// IR Obstacle Avoidance Sensor (trigger kamera)
+#define IR_SENSOR_PIN   13     // OUT pin IR sensor (LOW = ada objek terdeteksi)
+
+// Ultrasonik HC-SR04 (kedalaman bin)
+#define TRIG_PIN        14     // Shared TRIG untuk kedua sensor
+#define ECHO_ORGANIK    15     // ECHO sensor bin Organik
+#define ECHO_ANORGANIK  2      // ECHO sensor bin Anorganik
+
+// Parameter fisik bin
+#define BIN_DEPTH_CM    19.5   // Jarak sensor ke dasar bin (cm)
+#define MIN_DISTANCE_CM 2.0    // Jarak minimum sensor (cm)
 
 // Timing
-#define SERVO_HOLD_MS   3000   // Berapa lama servo di posisi pemilahan (ms)
-#define CAPTURE_DELAY   1000   // Delay antar capture (ms) - Nyala terus menerus
-
-// Button (optional, set ke -1 jika tidak pakai)
-#define BUTTON_PIN      13     // GPIO untuk push button trigger
-#define USE_BUTTON      false  // true = pakai button, false = auto capture
+#define TRIGGER_COOLDOWN 3000  // Cooldown setelah deteksi (ms)
+#define SCAN_INTERVAL    200   // Interval polling IR sensor (ms)
 
 // LED
 #define LED_FLASH       4      // Built-in flash LED
+
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
 
 // ============================================================================
 // AI-Thinker ESP32-CAM Pin Configuration
@@ -80,6 +102,86 @@ const char* BIN_ID      = "bin-001";
 
 Servo servo;
 bool cameraReady = false;
+unsigned long lastTriggerTime = 0;  // Untuk cooldown
+unsigned long lastWiFiReconnectAttempt = 0; // Untuk non-blocking WiFi reconnect
+
+void mqttCallback(char *topic, byte *payload, unsigned int length)
+{
+  String message;
+  for (int i = 0; i < length; i++)
+  {
+    message += (char)payload[i];
+  }
+
+  Serial.println("\n📥 [MQTT] Pesan masuk di topik: " + String(topic));
+  Serial.println("   Payload: " + message);
+
+  // Parse JSON
+  JsonDocument doc;
+  deserializeJson(doc, message);
+  String jenis = doc["jenis"] | "Unknown";
+
+  if (jenis == "Organik")
+  {
+    Serial.println("   🟢 Servo → ORGANIK");
+    servo.write(SERVO_ORGANIK);
+  }
+  else if (jenis == "Anorganik")
+  {
+    Serial.println("   🔴 Servo → ANORGANIK");
+    servo.write(SERVO_ANORGANIK);
+  }
+
+  delay(SERVO_HOLD_MS);
+  servo.write(SERVO_NETRAL);
+  Serial.println("   ⬜ Servo → NETRAL");
+
+  Serial.println("   📏 Mengukur kedalaman bin setelah sampah masuk...");
+  measureAndSendBinLevels();
+}
+
+unsigned long lastMqttReconnectAttempt = 0;
+
+void reconnectMQTT()
+{
+  // Jangan coba connect MQTT jika WiFi belum tersambung
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  // Non-blocking: coba reconnect maksimal 1x setiap 5 detik
+  unsigned long now = millis();
+  if (now - lastMqttReconnectAttempt < 5000) {
+    return; // Belum waktunya coba lagi
+  }
+  lastMqttReconnectAttempt = now;
+
+  Serial.print("🔄 Menghubungkan ke MQTT Broker (Aedes)...");
+  
+  // Set Last Will and Testament (LWT): jika putus tiba-tiba, broker publish status offline
+  const char* statusTopic = "smartbin/status";
+  const char* willMessage = "{\"is_online\":false,\"binId\":\"bin-001\"}";
+  uint8_t willQos = 1;
+  bool willRetain = true;
+
+  if (mqttClient.connect(BIN_ID, statusTopic, willQos, willRetain, willMessage))
+  {
+    Serial.println(" Berhasil!");
+    mqttClient.subscribe("smartbin/kontrol/servo");
+
+    // Kirim status online segera setelah berhasil terhubung
+    String ipStr = WiFi.localIP().toString();
+    int rssi = WiFi.RSSI();
+    String onlineMessage = "{\"is_online\":true,\"wifi_status\":\"connected\",\"ssid\":\"" + String(WIFI_SSID) + "\",\"ip\":\"" + ipStr + "\",\"rssi\":" + String(rssi) + ",\"binId\":\"" + String(BIN_ID) + "\"}";
+    mqttClient.publish(statusTopic, onlineMessage.c_str(), true); // true = retained
+  }
+  else
+  {
+    Serial.print(" Gagal, rc=");
+    Serial.print(mqttClient.state());
+    Serial.println(" Coba lagi dalam 5 detik...");
+  }
+}
 
 // ============================================================================
 // Setup
@@ -89,20 +191,26 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n===================================");
   Serial.println("🗑️  SmartBin Waste Classifier");
-  Serial.println("   ESP32-CAM + MobileNetV2");
+  Serial.println("   ESP32-CAM + IR + Ultrasonik");
   Serial.println("===================================\n");
 
-  // Init LED (nyala terus menerus untuk menerangi objek)
+  // Init LED (nyala terus untuk menerangi objek)
   pinMode(LED_FLASH, OUTPUT);
-  digitalWrite(LED_FLASH, HIGH);
+  digitalWrite(LED_FLASH, LOW);
 
-  // Init button (optional)
-  if (USE_BUTTON && BUTTON_PIN >= 0) {
-    pinMode(BUTTON_PIN, INPUT_PULLUP);
-    Serial.println("🔘 Button mode: tekan tombol untuk capture");
-  } else {
-    Serial.println("🔄 Auto mode: capture otomatis setiap " + String(CAPTURE_DELAY / 1000) + " detik");
-  }
+  // Init IR sensor
+  pinMode(IR_SENSOR_PIN, INPUT);
+  Serial.println("🔴 IR sensor initialized (GPIO " + String(IR_SENSOR_PIN) + ")");
+
+  // Init ultrasonic pins
+  pinMode(TRIG_PIN, OUTPUT);
+  digitalWrite(TRIG_PIN, LOW);
+  pinMode(ECHO_ORGANIK, INPUT);
+  pinMode(ECHO_ANORGANIK, INPUT);
+  Serial.println("📏 Ultrasonic sensors initialized");
+  Serial.println("   TRIG (shared): GPIO " + String(TRIG_PIN));
+  Serial.println("   ECHO Organik : GPIO " + String(ECHO_ORGANIK));
+  Serial.println("   ECHO Anorganik: GPIO " + String(ECHO_ANORGANIK));
 
   // Init servo
   servo.attach(SERVO_PIN);
@@ -115,8 +223,21 @@ void setup() {
   // Connect WiFi
   connectWiFi();
 
+  // Setup MQTT → Broker Aedes di server Node.js (tanpa TLS)
+  mqttClient.setServer(SERVER_IP, MQTT_PORT);
+  mqttClient.setCallback(mqttCallback);
+  mqttClient.setBufferSize(512);  // Buffer lebih besar untuk JSON payload
+
+  // Ukur bin level awal
+  Serial.println("\n📏 Pengukuran awal level bin...");
+  float distOrganik = measureDistance(ECHO_ORGANIK);
+  float distAnorganik = measureDistance(ECHO_ANORGANIK);
+  Serial.printf("   Organik  : %.1f cm\n", distOrganik);
+  Serial.printf("   Anorganik: %.1f cm\n", distAnorganik);
+
   Serial.println("\n✅ System ready!");
-  Serial.println("   Server: http://" + String(SERVER_IP) + ":" + String(SERVER_PORT) + "/api/classify");
+  Serial.println("   Mode: IR Trigger (menunggu objek di depan kamera)");
+  Serial.println("   Server: http://" + String(SERVER_IP) + ":" + String(SERVER_PORT));
   Serial.println("-----------------------------------\n");
 }
 
@@ -125,6 +246,14 @@ void setup() {
 // ============================================================================
 
 void loop() {
+  // ── 1. MQTT harus selalu diproses terlebih dahulu ──
+  //    Agar callback servo (mqttCallback) selalu responsif
+  if (!mqttClient.connected()) {
+    reconnectMQTT();
+  }
+  mqttClient.loop();
+
+  // ── 2. Cek prasyarat ──
   if (!cameraReady) {
     Serial.println("❌ Camera not ready");
     delay(5000);
@@ -133,39 +262,217 @@ void loop() {
 
   // Check WiFi connection
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("⚠️  WiFi disconnected, reconnecting...");
-    connectWiFi();
+    unsigned long now = millis();
+    if (now - lastWiFiReconnectAttempt > 10000) { // Coba hubungkan kembali setiap 10 detik
+      lastWiFiReconnectAttempt = now;
+      Serial.println("⚠️ WiFi terputus. Menghubungkan kembali secara non-blocking...");
+      WiFi.disconnect(true);
+      delay(100);
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+      WiFi.setSleep(false);
+    }
+    delay(SCAN_INTERVAL);
+    return; // Keluar dari loop karena koneksi terputus
   }
 
-  bool shouldCapture = false;
+  // Check cooldown
+  if (millis() - lastTriggerTime < TRIGGER_COOLDOWN) {
+    delay(SCAN_INTERVAL);
+    return;
+  }
 
-  if (USE_BUTTON && BUTTON_PIN >= 0) {
-    // Button mode: capture saat tombol ditekan
-    if (digitalRead(BUTTON_PIN) == LOW) {
-      delay(50);  // Debounce
-      if (digitalRead(BUTTON_PIN) == LOW) {
-        shouldCapture = true;
-        // Wait for button release
-        while (digitalRead(BUTTON_PIN) == LOW) {
-          delay(10);
-        }
+  // ── 3. Cek IR sensor: ada objek di depan kamera? ──
+  if (checkObjectPresence()) {
+    Serial.println("\n🔔 OBJEK TERDETEKSI oleh IR sensor!");
+    
+    // Countdown 3 detik sebelum mengambil foto
+    for (int i = 3; i > 0; i--) {
+      Serial.printf("⏳ Mengambil foto dalam %d detik...\n", i);
+      delay(1000);
+      mqttClient.loop(); // Tetap proses MQTT selama countdown
+    }
+    
+    // Capture dilakukan HANYA jika objek masih ada di depan sensor setelah delay 3 detik
+    if (checkObjectPresence()) {
+      lastTriggerTime = millis();
+
+      // Capture + classify + servo
+      Serial.println("📸 Capturing image...");
+      classifyAndSort();
+
+      Serial.println("⏳ Cooldown " + String(TRIGGER_COOLDOWN / 1000) + " detik...\n");
+    } else {
+      Serial.println("ℹ️ Pengambilan foto dibatalkan: Objek sudah tidak ada di depan sensor.");
+    }
+  }
+
+  delay(SCAN_INTERVAL);
+}
+
+// ============================================================================
+// IR Sensor - Deteksi Objek
+// ============================================================================
+
+/**
+ * Cek apakah IR obstacle sensor mendeteksi objek.
+ * IR sensor FC-51: OUT = LOW saat ada objek, HIGH saat tidak ada.
+ */
+bool checkObjectPresence() {
+  return digitalRead(IR_SENSOR_PIN) == LOW;
+}
+
+// ============================================================================
+// Ultrasonic HC-SR04 - Ukur Jarak
+// ============================================================================
+
+/**
+ * Mengukur jarak menggunakan sensor ultrasonik HC-SR04.
+ * Menggunakan shared TRIG pin (GPIO 14) dan echo pin yang ditentukan.
+ *
+ * @param echoPin - Pin ECHO sensor yang ingin dibaca
+ * @return Jarak dalam cm, atau -1 jika timeout/error
+ */
+float measureDistance(int echoPin) {
+  // Pastikan TRIG LOW dulu
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+
+  // Kirim pulse 10µs
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  // Baca durasi echo (timeout 30ms = ~500cm max)
+  long duration = pulseIn(echoPin, HIGH, 30000);
+
+  if (duration == 0) {
+    return -1;  // Timeout — sensor tidak mendeteksi echo
+  }
+
+  // Hitung jarak: kecepatan suara = 343 m/s = 0.0343 cm/µs
+  // Jarak = (duration / 2) * 0.0343
+  float distance = (duration / 2.0) * 0.0343;
+
+  // Filter noise: jarak di luar range wajar
+  if (distance < MIN_DISTANCE_CM || distance > BIN_DEPTH_CM + 10) {
+    return -1;
+  }
+
+  return distance;
+}
+
+/**
+ * Hitung rata-rata dari beberapa pengukuran untuk akurasi lebih baik.
+ * Mengambil 3 sampel dan mengembalikan median.
+ */
+float measureDistanceAvg(int echoPin) {
+  float readings[3];
+  int validCount = 0;
+
+  for (int i = 0; i < 3; i++) {
+    float d = measureDistance(echoPin);
+    if (d > 0) {
+      readings[validCount++] = d;
+    }
+    delay(60);  // Delay antar pengukuran untuk menghindari interference
+  }
+
+  if (validCount == 0) return -1;
+  if (validCount == 1) return readings[0];
+
+  // Urutkan dan ambil median
+  for (int i = 0; i < validCount - 1; i++) {
+    for (int j = i + 1; j < validCount; j++) {
+      if (readings[i] > readings[j]) {
+        float temp = readings[i];
+        readings[i] = readings[j];
+        readings[j] = temp;
       }
     }
-  } else {
-    // Auto mode: capture otomatis
-    shouldCapture = true;
   }
 
-  if (shouldCapture) {
-    Serial.println("📸 Capturing image...");
-    classifyAndSort();
+  return readings[validCount / 2];
+}
 
-    if (!USE_BUTTON) {
-      delay(CAPTURE_DELAY);
-    }
+// ============================================================================
+// Measure & Send Bin Levels (Diperbarui untuk MQTT)
+// ============================================================================
+
+void measureAndSendBinLevels()
+{
+  float distOrganik = measureDistanceAvg(ECHO_ORGANIK);
+  float distAnorganik = measureDistanceAvg(ECHO_ANORGANIK);
+
+  // Hitung persentase kepenuhan
+  float levelOrganik = 0;
+  float levelAnorganik = 0;
+
+  if (distOrganik > 0)
+  {
+    levelOrganik = ((BIN_DEPTH_CM - distOrganik) / BIN_DEPTH_CM) * 100.0;
+    if (levelOrganik < 0)
+      levelOrganik = 0;
+    if (levelOrganik > 100)
+      levelOrganik = 100;
   }
 
-  delay(100);  // Small delay to prevent tight loop
+  if (distAnorganik > 0)
+  {
+    levelAnorganik = ((BIN_DEPTH_CM - distAnorganik) / BIN_DEPTH_CM) * 100.0;
+    if (levelAnorganik < 0)
+      levelAnorganik = 0;
+    if (levelAnorganik > 100)
+      levelAnorganik = 100;
+  }
+
+  Serial.println("\n   ┌─────────────────────────────┐");
+  Serial.println("   │ 📏 LEVEL BIN (Ultrasonik)   │");
+  Serial.printf("   │ Organik  : %.1f cm → %.0f%%    │\n", distOrganik, levelOrganik);
+  Serial.printf("   │ Anorganik: %.1f cm → %.0f%%    │\n", distAnorganik, levelAnorganik);
+  Serial.println("   └─────────────────────────────┘\n");
+
+  // Kirim ke server via MQTT
+  sendBinLevels(levelOrganik, levelAnorganik, distOrganik, distAnorganik);
+}
+
+/**
+ * Kirim data level bin ke server via MQTT Publish.
+ * Jauh lebih cepat daripada HTTP POST.
+ */
+void sendBinLevels(float levelOrganik, float levelAnorganik, float distOrganik, float distAnorganik)
+{
+  // Pastikan MQTT terhubung sebelum mencoba mengirim
+  if (!mqttClient.connected())
+  {
+    Serial.println("❌ [MQTT] Tidak terhubung, batal mengirim data level bin");
+    return;
+  }
+
+  // Buat JSON payload menggunakan ArduinoJson
+  JsonDocument doc;
+  doc["binId"] = BIN_ID;
+  doc["organik_persen"] = round(levelOrganik);
+  doc["anorganik_persen"] = round(levelAnorganik);
+  doc["organik_cm"] = round(distOrganik * 10) / 10.0;
+  doc["anorganik_cm"] = round(distAnorganik * 10) / 10.0;
+  doc["bin_depth_cm"] = BIN_DEPTH_CM;
+
+  // Serialisasi JSON ke dalam String
+  String jsonPayload;
+  serializeJson(doc, jsonPayload);
+
+  // Publish ke topik MQTT
+  // Fungsi c_str() digunakan untuk mengubah String Arduino menjadi format const char* yang diminta oleh PubSubClient
+  if (mqttClient.publish("smartbin/sensor/level", jsonPayload.c_str()))
+  {
+    Serial.println("📤 [MQTT] Berhasil mengirim level bin!");
+    Serial.println("   Payload: " + jsonPayload);
+  }
+  else
+  {
+    Serial.println("❌ [MQTT] Gagal mengirim level bin (buffer mungkin penuh).");
+  }
 }
 
 // ============================================================================
@@ -197,15 +504,14 @@ void initCamera() {
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
 
-  // Gunakan QVGA untuk kecepatan, atau VGA untuk kualitas lebih baik
-  // Model akan resize ke 224x224 di server
+  // Gunakan CIF untuk balance kecepatan dan kualitas
   if (psramFound()) {
-    config.frame_size   = FRAMESIZE_CIF;     // 640x480
-    config.jpeg_quality = 10;                // 0-63 (lower = better quality)
+    config.frame_size   = FRAMESIZE_CIF;      // 400x296
+    config.jpeg_quality = 10;
     config.fb_count     = 1;
-    Serial.println("   PSRAM found → VGA mode (640x480)");
+    Serial.println("   PSRAM found → CIF mode (400x296)");
   } else {
-    config.frame_size   = FRAMESIZE_QVGA;    // 320x240
+    config.frame_size   = FRAMESIZE_QVGA;     // 320x240
     config.jpeg_quality = 15;
     config.fb_count     = 1;
     Serial.println("   No PSRAM → QVGA mode (320x240)");
@@ -222,12 +528,12 @@ void initCamera() {
   // Camera settings optimization
   sensor_t *s = esp_camera_sensor_get();
   if (s) {
-    s->set_brightness(s, 1);    // Brightness: -2 to 2
-    s->set_contrast(s, 1);      // Contrast: -2 to 2
-    s->set_saturation(s, 0);    // Saturation: -2 to 2
-    s->set_whitebal(s, 1);      // White balance: 0 = disable, 1 = enable
-    s->set_awb_gain(s, 1);      // AWB gain: 0 = disable, 1 = enable
-    s->set_wb_mode(s, 0);       // WB mode: 0 = auto
+    s->set_brightness(s, 1);
+    s->set_contrast(s, 1);
+    s->set_saturation(s, 0);
+    s->set_whitebal(s, 1);
+    s->set_awb_gain(s, 1);
+    s->set_wb_mode(s, 0);
   }
 
   cameraReady = true;
@@ -239,10 +545,15 @@ void initCamera() {
 // ============================================================================
 
 void connectWiFi() {
-  Serial.print("📶 Connecting to WiFi: " + String(WIFI_SSID));
+  Serial.println("\n📶 Connecting to WiFi: " + String(WIFI_SSID));
+
+  // Matikan koneksi sebelumnya dan set mode ke Station secara eksplisit
+  WiFi.disconnect(true);
+  delay(1000);
+  WiFi.mode(WIFI_STA);
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  WiFi.setSleep(false);  // Disable WiFi sleep for faster response
+  WiFi.setSleep(false);
 
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 30) {
@@ -265,29 +576,44 @@ void connectWiFi() {
 // Main Classification + Sorting Logic
 // ============================================================================
 
-void classifyAndSort() {
-  // 1. Capture image
+void classifyAndSort()
+{
+  // 1. Bersihkan buffer kamera (Buang frame usang/stale yang mengendap di DMA memori)
+  camera_fb_t *fbTemp = esp_camera_fb_get();
+  if (fbTemp)
+  {
+    esp_camera_fb_return(fbTemp);
+    fbTemp = NULL;
+  }
+
+  digitalWrite(LED_FLASH, HIGH);
+  // Berikan delay sangat singkat (100ms) agar sensor kamera sempat menyesuaikan pencahayaan/eksposur otomatis
+  delay(100);
+
+  // 2. Capture image yang sesungguhnya (Fresh Frame!)
   camera_fb_t *fb = esp_camera_fb_get();
-  if (!fb) {
+  
+  digitalWrite(LED_FLASH, LOW);
+
+  if (!fb)
+  {
     Serial.println("❌ Camera capture failed!");
     return;
   }
 
   Serial.printf("   Image size: %d bytes (%dx%d)\n", fb->len, fb->width, fb->height);
 
-  // 2. Flash LED stays ON continuously, no need to toggle
-  delay(50); // Small delay for camera exposure adjustment if needed
-
-  // 3. Send to server
-  String result = sendImageToServer(fb->buf, fb->len);
+  // 3. Send to server via HTTP (Hanya mengirim, tidak perlu mem-parsing balasannya)
+  sendImageToServer(fb->buf, fb->len);
 
   // 4. Release camera buffer immediately
   esp_camera_fb_return(fb);
 
-  // 5. Parse response and move servo
-  if (result.length() > 0) {
-    parseAndAct(result);
-  }
+  // 5. SELESAI!
+  // Kita menghapus pemanggilan parseAndAct(result).
+  // Fungsi ini langsung berakhir agar ESP32 bisa kembali ke loop() utama
+  // dan mendengarkan pesan masuk MQTT yang akan memicu mqttCallback()
+  Serial.println("✅ Gambar dikirim. Menunggu instruksi servo via MQTT...");
 }
 
 // ============================================================================
@@ -308,7 +634,7 @@ String sendImageToServer(uint8_t *imageData, size_t imageLen) {
   http.begin(url);
   http.addHeader("Content-Type", "image/jpeg");
   http.addHeader("X-Bin-Id", BIN_ID);
-  http.setTimeout(15000);  // 15 second timeout
+  http.setTimeout(15000);
 
   unsigned long startTime = millis();
   int httpCode = http.POST(imageData, imageLen);
@@ -326,57 +652,4 @@ String sendImageToServer(uint8_t *imageData, size_t imageLen) {
 
   http.end();
   return response;
-}
-
-// ============================================================================
-// Parse Server Response & Move Servo
-// ============================================================================
-
-void parseAndAct(String jsonResponse) {
-  // Parse JSON response
-  JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, jsonResponse);
-
-  if (error) {
-    Serial.println("   ❌ JSON parse error: " + String(error.c_str()));
-    return;
-  }
-
-  bool success = doc["success"] | false;
-  if (!success) {
-    String message = doc["message"] | "Unknown error";
-    Serial.println("   ❌ Server error: " + message);
-    return;
-  }
-
-  // Extract classification result
-  const char* jenis = doc["data"]["jenis"] | "Unknown";
-  float confidence = doc["data"]["confidence"] | 0.0;
-  int inferenceTime = doc["data"]["inference_time_ms"] | 0;
-
-  Serial.println("\n   ┌─────────────────────────────┐");
-  Serial.println("   │ 🗑️  HASIL KLASIFIKASI        │");
-  Serial.printf( "   │ Jenis     : %-15s │\n", jenis);
-  Serial.printf( "   │ Confidence: %.1f%%           │\n", confidence * 100);
-  Serial.printf( "   │ Inference : %dms             │\n", inferenceTime);
-  Serial.println("   └─────────────────────────────┘\n");
-
-  // Move servo based on classification
-  if (String(jenis) == "Organik") {
-    Serial.println("   🟢 Servo → ORGANIK (" + String(SERVO_ORGANIK) + "°)");
-    servo.write(SERVO_ORGANIK);
-  } else if (String(jenis) == "Anorganik") {
-    Serial.println("   🔴 Servo → ANORGANIK (" + String(SERVO_ANORGANIK) + "°)");
-    servo.write(SERVO_ANORGANIK);
-  } else {
-    Serial.println("   ⚪ Unknown type, staying neutral");
-    return;
-  }
-
-  // Hold position
-  delay(SERVO_HOLD_MS);
-
-  // Return to neutral
-  servo.write(SERVO_NETRAL);
-  Serial.println("   ⬜ Servo → NETRAL (" + String(SERVO_NETRAL) + "°)\n");
 }

@@ -127,78 +127,53 @@ pemilahan-sampah-iot/
 ### 1. Prasyarat Sistem
 Pastikan Anda telah memasang:
 - **Node.js** (v18.x atau v20.x disarankan)
-- **Python** (3.9 - 3.11) + **PIP** (untuk melatih kembali model)
 - **Arduino IDE** (dengan dukungan board ESP32 terinstal)
+- **Koneksi WiFi** 2.4 GHz (ESP32-CAM tidak mendukung WiFi 5 GHz)
 
 ---
 
-### 2. Pengembangan Model Deep Learning (Python)
-Jika Anda ingin melatih kembali model klasifikasi menggunakan dataset lokal:
-
-1. Masuk ke direktori model:
-   ```bash
-   cd model
-   ```
-2. Instal semua dependensi Python:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Jalankan skrip pelatihan:
-   ```bash
-   python train_model.py
-   ```
-   *Skrip ini akan otomatis mengunduh dataset, melakukan data augmentation, melatih model dengan transfer learning (2 fase), dan mengekspor model langsung ke direktori `server/ml-model/`.*
+### 2. Pengaturan Firebase
+Proyek ini membutuhkan Firebase Realtime Database untuk menyimpan log riwayat dan status bin secara real-time.
+1. Masuk ke [Firebase Console](https://console.firebase.google.com/).
+2. Buat proyek baru dan aktifkan **Realtime Database**. Salin URL Database Anda (contoh: `https://your-project-id.firebaseio.com/`).
+3. Masuk ke **Project Settings** -> **Service Accounts**.
+4. Klik tombol **"Generate new private key"** (Buat kunci privat baru) dan unduh file JSON-nya.
+5. Simpan file JSON tersebut di dalam direktori `server/` dan ganti namanya menjadi: `smart-waste-iot-firebase-adminsdk.json`.
 
 ---
 
-### 3. Konfigurasi & Menjalankan Server Node.js
+### 3. Konfigurasi & Menjalankan Server Node.js (Backend + MQTT Broker)
+Server backend Node.js bertindak sebagai API server (inferensi AI) sekaligus sebagai MQTT Broker lokal menggunakan **Aedes**.
 
-1. Masuk ke direktori server:
+1. Buka terminal/cmd dan masuk ke direktori server:
    ```bash
    cd server
    ```
-2. Instal pustaka dependensi (termasuk modul TensorFlow.js native):
+2. Instal semua dependensi (termasuk TensorFlow.js):
    ```bash
    npm install
    ```
-3. Konfigurasikan variabel lingkungan dengan membuat file `.env` di dalam folder `server/`:
+3. Buat file `.env` di dalam folder `server/` dan konfigurasikan seperti berikut:
    ```env
-   PORT=5000
-   FIREBASE_DB_URL=https://<your-project-id>.firebaseio.com
-   MQTT_BROKER_URL=mqtt://broker.emqx.io
+   PORT=3000
+   MQTT_BROKER_URL=mqtt://127.0.0.1:1883
+   FIREBASE_DATABASE_URL=https://<your-project-id>-default-rtdb.asia-southeast1.firebasedatabase.app/
+   NODE_ENV=development
+   CORS_ORIGIN=http://localhost:5173
    ```
-4. Masukkan file kredensial Firebase Admin SDK Anda (`serviceAccountKey.json`) ke folder `server/config/`.
-5. Jalankan server dalam mode development:
+   *Sesuaikan `FIREBASE_DATABASE_URL` dengan URL database Firebase Anda.*
+4. Jalankan server dalam mode development:
    ```bash
    npm run dev
    ```
-   *Server akan memuat model kecerdasan buatan secara otomatis saat startup. Anda akan melihat log `✅ Classification model ready!` jika model berhasil termuat.*
+   *Saat startup, server akan otomatis memuat model AI (MobileNetV2), menjalankan MQTT Broker lokal di port `1883`, dan menghubungkan client MQTT server ke broker lokal.*
 
 ---
 
-### 4. Konfigurasi & Upload ESP32-CAM Firmware
+### 4. Konfigurasi & Menjalankan Web Dashboard (React + Vite)
+Aplikasi frontend menggunakan React dan Vite untuk visualisasi dashboard.
 
-1. Buka aplikasi **Arduino IDE**.
-2. Instal library yang dibutuhkan melalui **Library Manager**:
-   - `ArduinoJson` (oleh Benoit Blanchon)
-   - `ESP32Servo` (oleh Kevin Harrington)
-3. Buka file firmware `esp32cam/esp32cam_waste_classifier/esp32cam_waste_classifier.ino`.
-4. Sesuaikan konfigurasi jaringan WiFi dan alamat IP Server Node.js Anda:
-   ```cpp
-   const char* ssid = "NAMA_WIFI_ANDA";
-   const char* password = "PASSWORD_WIFI_ANDA";
-   const char* serverName = "http://IP_SERVER_ANDA:5000/api/classify";
-   ```
-5. Pilih Board: **AI Thinker ESP32-CAM**.
-6. Hubungkan modul ESP32-CAM ke komputer menggunakan FTDI programmer. Pasang jumper antara **GPIO 0** dan **GND** untuk mengaktifkan mode flash/upload.
-7. Tekan tombol **Upload** di Arduino IDE. Setelah selesai, lepas jumper GPIO 0-GND dan tekan tombol RESET di ESP32-CAM.
-8. Buka **Serial Monitor** dengan baudrate `115200` untuk memantau proses klasifikasi sampah.
-
----
-
-### 5. Menjalankan Web Dashboard (React + Vite)
-
-1. Masuk ke direktori client:
+1. Buka terminal baru dan masuk ke direktori client:
    ```bash
    cd client
    ```
@@ -210,20 +185,49 @@ Jika Anda ingin melatih kembali model klasifikasi menggunakan dataset lokal:
    ```bash
    npm run dev
    ```
-4. Buka peramban (browser) Anda di alamat `http://localhost:5173`. Anda sekarang dapat memantau visualisasi kapasitas smart bin dan log klasifikasi secara *real-time*!
+4. Buka peramban (browser) di alamat `http://localhost:5173`. Halaman dashboard akan mengambil data secara otomatis ke port `3000` (backend).
+
+---
+
+### 5. Konfigurasi & Upload Firmware ESP32-CAM
+Bagian ini mengatur agar ESP32-CAM dapat mengambil foto, mengirimkannya ke Node.js via HTTP POST, dan menerima instruksi aktuasi servo via MQTT.
+
+1. Buka aplikasi **Arduino IDE**.
+2. Instal library berikut via **Library Manager**:
+   - `ArduinoJson` (oleh Benoit Blanchon)
+   - `ESP32Servo` (oleh Kevin Harrington)
+   - `PubSubClient` (oleh Nick O'Leary)
+3. Buka file firmware `esp32cam/esp32cam_waste_classifier/esp32cam_waste_classifier.ino`.
+4. Sesuaikan konfigurasi WiFi dan IP Server Anda pada baris kode berikut:
+   ```cpp
+   // WiFi credentials
+   const char* WIFI_SSID     = "SSID_WIFI_ANDA";     
+   const char* WIFI_PASSWORD = "PASSWORD_WIFI_ANDA"; 
+
+   // Ganti dengan IP lokal komputer/server Anda (gunakan cmd > ipconfig)
+   const char* SERVER_IP   = "IP_SERVER_LOCAL_ANDA"; 
+   const int   SERVER_PORT = 3000;
+   const int   MQTT_PORT   = 1883;
+   ```
+5. Pilih Board: **AI Thinker ESP32-CAM** (pastikan library Board ESP32 sudah terinstal di Arduino IDE).
+6. Hubungkan ESP32-CAM ke komputer menggunakan modul FTDI programmer. Sambungkan pin **GPIO 0** ke **GND** pada ESP32-CAM agar masuk ke mode flash/upload, lalu tekan tombol RESET pada ESP32-CAM.
+7. Tekan tombol **Upload** di Arduino IDE. Setelah selesai, **lepas kabel jumper GPIO 0 - GND**, dan tekan kembali tombol RESET pada ESP32-CAM.
+8. Buka **Serial Monitor** (Baudrate `115200`) untuk melihat debug log koneksi WiFi, MQTT, dan sensor.
 
 ---
 
 ## 🔌 Skema Pin Out Perangkat Keras
 
-Berikut adalah koneksi kabel antara ESP32-CAM dengan sensor serta aktuator fisik:
+Berikut adalah skema koneksi kabel antara ESP32-CAM dengan sensor serta aktuator fisik sesuai dengan kode firmware:
 
-| Komponen Perangkat Keras | Pin ESP32-CAM | Detail Deskripsi |
+| Komponen Perangkat Keras | Pin ESP32-CAM | Keterangan Deskripsi |
 | :--- | :---: | :--- |
-| **Servo Motor SG90 (Signal)** | `GPIO 12` | Aktuator fisik pemilah sampah |
-| **Sensor Ultrasonik HC-SR04 (Trig)** | `GPIO 13` | Deteksi jarak & objek masuk |
-| **Sensor Ultrasonik HC-SR04 (Echo)** | `GPIO 14` | Pengukur jarak waktu pantul gelombang |
-| **Push Button (Trigger Manual)** | `GPIO 15` | Opsional untuk pengujian manual capture |
+| **Servo Motor SG90 (Signal)** | `GPIO 12` | Mengontrol arah tutup tempat sampah |
+| **Sensor IR Obstacle (OUT)** | `GPIO 13` | Mendeteksi objek sampah masuk di depan kamera |
+| **Sensor Ultrasonik HC-SR04 (Trig)** | `GPIO 14` | Trigger pengukuran kedalaman bin (Organik & Anorganik) |
+| **Sensor Ultrasonik HC-SR04 (Echo Organik)** | `GPIO 15` | Echo untuk mengukur kapasitas tempat sampah organik |
+| **Sensor Ultrasonik HC-SR04 (Echo Anorganik)** | `GPIO 2` | Echo untuk mengukur kapasitas tempat sampah anorganik |
+| **Kapasitor Decoupling** | `5V` & `GND` | **1000µF / 16V** dipasang paralel untuk mencegah brownout reset saat servo bergerak |ger Manual)** | `GPIO 15` | Opsional untuk pengujian manual capture |
 | **Kapasitor Decoupling** | `5V` & `GND` | **1000µF / 16V** dipasang paralel untuk mencegah brownout |
 
 ---

@@ -12,6 +12,8 @@ const MQTT_CONFIG = {
     classification: "smartbin/classification",
     capacity: "smartbin/capacity",
     status: "smartbin/status",
+    kontrolServo: "smartbin/kontrol/servo",     // Server → ESP32: perintah servo
+    sensorLevel: "smartbin/sensor/level",       // ESP32 → Server: data level bin
     all: "smartbin/#", // Subscribe to all smartbin topics
   },
 };
