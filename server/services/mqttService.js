@@ -6,8 +6,9 @@
  */
 
 const mqtt = require("mqtt");
-const { setData } = require("../config/firebase");
+const { setData, updateData } = require("../config/firebase");
 const MQTT_CONFIG = require("../config/mqtt");
+const logger = require("../utils/logger");
 
 let client = null;
 let isConnected = false;
@@ -21,14 +22,21 @@ function connect() {
   client.on("connect", () => {
     isConnected = true;
     console.log("✅ Node.js MQTT Client connected!");
-    // Hanya subscribe sensorLevel — TIDAK subscribe smartbin/#
-    client.subscribe(MQTT_CONFIG.topics.sensorLevel, (err) => {
-      if (err) console.error("❌ Gagal subscribe sensorLevel:", err);
-      else console.log(`📡 Subscribed to: ${MQTT_CONFIG.topics.sensorLevel}`);
+    
+    // Subscribe ke sensorLevel dan status
+    const topicsToSubscribe = [
+      MQTT_CONFIG.topics.sensorLevel,
+      MQTT_CONFIG.topics.status
+    ];
+    
+    client.subscribe(topicsToSubscribe, (err) => {
+      if (err) console.error("❌ Gagal subscribe MQTT topics:", err);
+      else console.log(`📡 Subscribed to: ${topicsToSubscribe.join(", ")}`);
     });
   });
 
   client.on("message", async (topic, message) => {
+    // 1. TOPIK: sensorLevel (ESP32-CAM mengirim level kedalaman tong)
     if (topic === MQTT_CONFIG.topics.sensorLevel) {
       try {
         const payload = JSON.parse(message.toString());
@@ -40,32 +48,84 @@ function connect() {
           anorganik_persen = 0,
           organik_cm = -1,
           anorganik_cm = -1,
-          bin_depth_cm = 26.0,
+          bin_depth_cm = 19.5, // Selaras dengan 19.5 cm sesuai request user
         } = payload;
 
-        const kapasitas_persen = Math.max(organik_persen, anorganik_persen);
+        // Hitung kapasitas total (ambil yang paling penuh untuk safety)
+        const kapasitas_persen = Math.max(
+          organik_persen >= 0 ? organik_persen : 0,
+          anorganik_persen >= 0 ? anorganik_persen : 0
+        );
 
+        // Tentukan status bin berdasarkan kapasitas tertinggi
         let status = "normal";
-        if (kapasitas_persen >= 90) status = "full";
-        else if (kapasitas_persen >= 75) status = "warning";
+        if (kapasitas_persen >= 90) {
+          status = "full";
+        } else if (kapasitas_persen >= 75) {
+          status = "warning";
+        }
 
-        await setData(`bins/${binId}/level`, {
-          organik_persen,
-          anorganik_persen,
-          organik_cm,
-          anorganik_cm,
-          bin_depth_cm,
-          kapasitas_persen,
+        const timestamp = Date.now();
+
+        // Update data di Firebase Realtime Database di path status
+        const updatePayload = {
+          kapasitas_persen: parseFloat(kapasitas_persen),
+          level_organik: parseFloat(organik_persen),
+          level_anorganik: parseFloat(anorganik_persen),
+          jarak_organik: parseFloat(organik_cm),
+          jarak_anorganik: parseFloat(anorganik_cm),
+          bin_depth_cm: parseFloat(bin_depth_cm),
           status,
           is_online: true,
-          timestamp: Date.now(),
-        });
+          lastUpdate: timestamp,
+        };
 
-        console.log(
-          `✅ [MQTT] Level bin ${binId} diperbarui: Organik ${organik_persen}%, Anorganik ${anorganik_persen}%`,
+        await updateData(`bins/${binId}/status`, updatePayload);
+        logger.success(
+          `✅ [MQTT] Level bin ${binId} diperbarui: Organik ${organik_persen}%, Anorganik ${anorganik_persen}%`
         );
+
+        // Buat alert jika salah satu atau kedua bin penuh
+        if (status === "full") {
+          let alertMsg = "Tempat sampah Organik & Anorganik PENUH!";
+          if (organik_persen >= 90 && anorganik_persen < 90) {
+            alertMsg = "Tempat sampah Organik PENUH!";
+          } else if (anorganik_persen >= 90 && organik_persen < 90) {
+            alertMsg = "Tempat sampah Anorganik PENUH!";
+          }
+
+          const alertPath = `alerts/${binId}/${timestamp}`;
+          await setData(alertPath, {
+            type: "bin_full",
+            message: alertMsg,
+            severity: "warning",
+            timestamp,
+            resolved: false,
+          });
+          logger.warning(`Auto-alert created via MQTT: ${alertMsg}`);
+        }
       } catch (error) {
-        console.error("❌ Error parsing MQTT message:", error);
+        console.error("❌ Error parsing/processing MQTT message:", error);
+      }
+    }
+
+    // 2. TOPIK: status (online dari ESP32-CAM)
+    if (topic === MQTT_CONFIG.topics.status) {
+      try {
+        const payload = JSON.parse(message.toString());
+        console.log(`📥 [MQTT] Status device diterima: ${message.toString()}`);
+
+        const { binId = "bin-001", is_online = false } = payload;
+
+        if (is_online) {
+          await updateData(`bins/${binId}/status`, {
+            is_online: true,
+            lastUpdate: Date.now()
+          });
+          logger.info(`✅ [MQTT] Status online bin ${binId} diperbarui: true`);
+        }
+      } catch (error) {
+        console.error("❌ Error parsing status MQTT message:", error);
       }
     }
   });

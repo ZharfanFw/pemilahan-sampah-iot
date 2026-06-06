@@ -42,7 +42,7 @@ export default function Dashboard() {
   const [isScanning, setIsScanning] = useState(false);
   const [showResult, setShowResult] = useState(false);
 
-  const [isCameraOffline, setIsCameraOffline] = useState(true); // Default awalnya TRUE
+  const [isCameraOffline, setIsCameraOffline] = useState(false); // Default false: tampilkan kamera
   const [imgTimestamp, setImgTimestamp] = useState(Date.now());
 
   // Fetch data dari API backend
@@ -60,6 +60,8 @@ export default function Dashboard() {
 
       if (binRes.success) {
         setBinStatus(binRes.data);
+        // Jangan set isCameraOffline berdasarkan is_online
+        // Biarkan onLoad/onError dari <img> yang menentukan
       }
 
       if (statsRes.success) {

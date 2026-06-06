@@ -105,6 +105,11 @@ bool cameraReady = false;
 unsigned long lastTriggerTime = 0;  // Untuk cooldown
 unsigned long lastWiFiReconnectAttempt = 0; // Untuk non-blocking WiFi reconnect
 
+// Flag-based servo control (non-blocking approach)
+// mqttCallback hanya set flag, loop() yang mengeksekusi servo
+bool pendingServoAction = false;
+String pendingJenis = "";
+
 void mqttCallback(char *topic, byte *payload, unsigned int length)
 {
   String message;
@@ -121,39 +126,16 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
   deserializeJson(doc, message);
   String jenis = doc["jenis"] | "Unknown";
 
-  bool knownType = true;
-  if (jenis == "Organik")
+  if (jenis == "Organik" || jenis == "Anorganik")
   {
-    Serial.println("   🟢 Servo → ORGANIK");
-    servo.attach(SERVO_PIN);
-    servo.write(SERVO_ORGANIK);
-  }
-  else if (jenis == "Anorganik")
-  {
-    Serial.println("   🔴 Servo → ANORGANIK");
-    servo.attach(SERVO_PIN);
-    servo.write(SERVO_ANORGANIK);
+    // Simpan ke flag, JANGAN langsung gerakkan servo di callback
+    pendingJenis = jenis;
+    pendingServoAction = true;
+    Serial.println("   ✅ Servo action queued: " + jenis);
   }
   else
   {
     Serial.println("   ⚪ Tipe tidak dikenal, servo tetap netral");
-    knownType = false;
-  }
-
-  if (knownType)
-  {
-    // Tunggu servo membuka kompartemen (3 detik) agar sampah masuk
-    delay(SERVO_HOLD_MS);
-
-    // Cek kedalaman sampah menggunakan sensor ultrasonik saat servo masih terbuka
-    Serial.println("   📏 Mengukur kedalaman bin saat servo terbuka...");
-    measureAndSendBinLevels();
-
-    // Kembalikan servo ke default (netral)
-    servo.write(SERVO_NETRAL);
-    delay(500); // Beri waktu servo kembali ke posisi netral
-    servo.detach();
-    Serial.println("   ⬜ Servo → NETRAL & Detached");
   }
 }
 
@@ -266,7 +248,6 @@ void setup() {
 
 void loop() {
   // ── 1. MQTT harus selalu diproses terlebih dahulu ──
-  //    Agar callback servo (mqttCallback) selalu responsif
   if (!mqttClient.connected()) {
     reconnectMQTT();
   }
@@ -279,21 +260,19 @@ void loop() {
     return;
   }
 
-  // Check WiFi connection
+  // Check WiFi connection (non-blocking)
   static unsigned long disconnectTime = 0;
   if (WiFi.status() != WL_CONNECTED) {
     if (disconnectTime == 0) {
       disconnectTime = millis();
     }
     
-    // Tampilkan log status setiap 5 detik
     static unsigned long lastLogTime = 0;
     if (millis() - lastLogTime > 5000) {
       lastLogTime = millis();
       Serial.printf("⚠️ WiFi terputus (Sudah %d detik). Menunggu auto-reconnect...\n", (millis() - disconnectTime) / 1000);
     }
     
-    // Jika terputus terus selama > 45 detik, lakukan hard reset koneksi WiFi
     if (millis() - disconnectTime > 45000) {
       Serial.println("🔄 Sudah 45 detik terputus. Melakukan hard reset koneksi WiFi...");
       WiFi.disconnect(true);
@@ -301,12 +280,18 @@ void loop() {
       WiFi.mode(WIFI_STA);
       WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
       WiFi.setSleep(false);
-      disconnectTime = millis(); // Reset timer
+      disconnectTime = millis();
     }
     delay(SCAN_INTERVAL);
-    return; // Keluar dari loop karena koneksi terputus
+    return;
   } else {
-    disconnectTime = 0; // Reset timer jika WiFi terhubung
+    disconnectTime = 0;
+  }
+
+  // ── 3. Proses pending servo action (dari mqttCallback) ──
+  if (pendingServoAction) {
+    pendingServoAction = false;
+    executeServoAction(pendingJenis);
   }
 
   // Check cooldown
@@ -315,7 +300,7 @@ void loop() {
     return;
   }
 
-  // ── 3. Cek IR sensor: ada objek di depan kamera? ──
+  // ── 4. Cek IR sensor: ada objek di depan kamera? ──
   if (checkObjectPresence()) {
     Serial.println("\n🔔 OBJEK TERDETEKSI oleh IR sensor! Mengirim sinyal ke kamera...");
     
@@ -323,25 +308,77 @@ void loop() {
     for (int i = 3; i > 0; i--) {
       Serial.printf("⏳ Mengambil foto dalam %d detik...\n", i);
       delay(1000);
-      mqttClient.loop(); // Tetap proses MQTT
+      mqttClient.loop(); // Tetap proses MQTT selama menunggu
     }
 
     lastTriggerTime = millis();
 
-    // Capture + classify + servo
+    // Capture + kirim ke server
     Serial.println("📸 Mengambil foto sekarang...");
     classifyAndSort();
 
     Serial.println("⏳ Cooldown " + String(TRIGGER_COOLDOWN / 1000) + " detik...\n");
   }
 
-  if (!mqttClient.connected())
-  {
-    reconnectMQTT();
-  }
-  mqttClient.loop(); // WAJIB ADA agar fungsi callback berjalan
-
+  // Proses MQTT di akhir loop juga
+  mqttClient.loop();
   delay(SCAN_INTERVAL);
+}
+
+// ============================================================================
+// Servo Action Execution (Non-blocking, dipanggil dari loop)
+// ============================================================================
+
+/**
+ * Eksekusi aksi servo berdasarkan jenis sampah.
+ * Fungsi ini dipanggil dari loop(), BUKAN dari mqttCallback().
+ * Ini memastikan WiFi dan MQTT tetap stabil selama servo bergerak.
+ */
+void executeServoAction(String jenis) {
+  int targetAngle = SERVO_NETRAL;
+
+  if (jenis == "Organik") {
+    Serial.println("\n   🟢 Servo → ORGANIK (0°)");
+    targetAngle = SERVO_ORGANIK;
+  } else if (jenis == "Anorganik") {
+    Serial.println("\n   🔴 Servo → ANORGANIK (180°)");
+    targetAngle = SERVO_ANORGANIK;
+  } else {
+    Serial.println("   ⚪ Jenis tidak dikenal, skip servo");
+    return;
+  }
+
+  // 1. Attach dan gerakkan servo
+  servo.attach(SERVO_PIN);
+  delay(50); // Beri waktu attach sebelum write
+  servo.write(targetAngle);
+  Serial.printf("   📐 Servo.write(%d) done\n", targetAngle);
+
+  // 2. Tunggu servo membuka kompartemen (3 detik)
+  //    Gunakan loop kecil agar MQTT & WiFi tetap jalan
+  Serial.println("   ⏳ Menunggu 3 detik (servo hold)...");
+  for (int i = 0; i < 30; i++) {
+    delay(100);
+    mqttClient.loop(); // Jaga MQTT tetap aktif
+  }
+
+  // 3. Ukur kedalaman bin SETELAH servo terbuka
+  Serial.println("   📏 Mengukur kedalaman bin setelah servo terbuka...");
+  measureAndSendBinLevels();
+
+  // 4. Kembalikan servo ke posisi netral
+  servo.write(SERVO_NETRAL);
+  Serial.println("   ⬜ Servo → NETRAL (90°)");
+
+  // 5. Beri waktu servo kembali ke posisi netral
+  for (int i = 0; i < 5; i++) {
+    delay(100);
+    mqttClient.loop();
+  }
+
+  // 6. Detach servo untuk hemat daya & mencegah jitter
+  servo.detach();
+  Serial.println("   ✅ Servo detached. Siklus selesai.\n");
 }
 
 // ============================================================================
@@ -388,8 +425,8 @@ float measureDistance(int echoPin) {
   // Jarak = (duration / 2) * 0.0343
   float distance = (duration / 2.0) * 0.0343;
 
-  // Filter noise: jarak di luar range wajar
-  if (distance < MIN_DISTANCE_CM || distance > BIN_DEPTH_CM + 10) {
+  // Filter noise: jarak di luar range wajar (maksimal 400 cm)
+  if (distance < MIN_DISTANCE_CM || distance > 400.0) {
     return -1;
   }
 
@@ -585,6 +622,7 @@ void connectWiFi() {
   WiFi.disconnect(true);
   delay(1000);
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true); // Pastikan auto-reconnect bawaan ESP32 aktif
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   WiFi.setSleep(false);

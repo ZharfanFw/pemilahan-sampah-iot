@@ -13,9 +13,11 @@ app.use(express.json());
 app.get("/uploads/latest.jpg", (req, res) => {
   const filePath = path.join(__dirname, "uploads", "latest.jpg");
   if (fs.existsSync(filePath)) {
-    const stats = fs.statSync(filePath);
-    const fileAge = Date.now() - stats.mtimeMs;
-    if (fileAge > 5000) return res.status(404).send("Kamera Offline");
+    // Selalu kirim gambar terakhir, tanpa cek umur file
+    // Dashboard menampilkan gambar terakhir yang di-capture ESP32-CAM
+    res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
     return res.sendFile(filePath);
   }
   return res.status(404).send("Gambar tidak ditemukan");
