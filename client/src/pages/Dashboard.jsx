@@ -426,26 +426,41 @@ export default function Dashboard() {
                 <div className="flex-1 flex flex-col items-center justify-center bg-black rounded-lg overflow-hidden relative group aspect-square lg:aspect-auto lg:h-72 shadow-inner border border-gray-900">
                   {/* The camera image dengan logika URL Dinamis */}
                   <img
-                    src={
-                      isCameraOffline
-                        ? "https://placehold.co/600x400/111827/4b5563?text=KAMERA+OFFLINE"
-                        : `http://localhost:3000/uploads/latest.jpg?t=${imgTimestamp}`
-                    }
+                    src={`http://${window.location.hostname}:3000/uploads/latest.jpg?t=${imgTimestamp}`}
                     alt="Terdeteksi Terakhir"
                     className={`w-full h-full object-cover transition-all duration-300 ${
-                      isCameraOffline ? "opacity-70 grayscale" : "opacity-100"
+                      isCameraOffline ? "opacity-0 absolute pointer-events-none" : "opacity-100"
                     }`}
                     onLoad={(e) => {
-                      // ✅ HANYA set online jika gambar yang berhasil di-load berasal dari localhost
-                      if (e.target.src.includes("localhost:3000")) {
+                      if (e.target.src.includes(`${window.location.hostname}:3000`)) {
                         setIsCameraOffline(false);
                       }
                     }}
                     onError={() => {
-                      // ✅ Jika request ke localhost 3000 gagal/404, langsung kunci ke status OFFLINE
                       setIsCameraOffline(true);
                     }}
                   />
+
+                  {/* Placeholder overlay ketika offline */}
+                  {isCameraOffline && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 text-gray-400">
+                      <svg
+                        className="w-12 h-12 text-gray-600 mb-3 animate-pulse"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                        />
+                      </svg>
+                      <span className="text-sm font-semibold tracking-wider">KAMERA OFFLINE</span>
+                      <span className="text-[10px] text-gray-500 mt-1">Menunggu feed gambar dari ESP32-CAM...</span>
+                    </div>
+                  )}
 
                   {/* SCANNING LASER EFFECT - ✅ Hanya tampil jika kamera ONLINE */}
                   {isScanning && !isCameraOffline && (

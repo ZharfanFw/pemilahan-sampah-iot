@@ -41,11 +41,6 @@ lerna-debug.log*
 Thumbs.db
 .DS_Store
 
-# Package manager lock files (optional, uncomment jika tidak ingin track)
-# package-lock.json
-# yarn.lock
-# pnpm-lock.yaml
-
 # Vite
 .vite/
 
@@ -76,4 +71,5 @@ env/
 .env/
 
 # Uploaded images / camera captures
-server/uploads/
+server/uploads/*
+!server/uploads/.gitkeep

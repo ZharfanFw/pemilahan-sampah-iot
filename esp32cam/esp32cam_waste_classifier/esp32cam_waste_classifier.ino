@@ -37,12 +37,13 @@
 // ============================================================================
 
 // WiFi credentials
-const char* WIFI_SSID     = "Maul";              // ← Ganti dengan SSID WiFi
-const char* WIFI_PASSWORD = "satusampedelapan";   // ← Ganti dengan password WiFi
+const char* WIFI_SSID     = "cipaa";              // ← Ganti dengan SSID WiFi
+const char* WIFI_PASSWORD = "yanyanyan";   // ← Ganti dengan password WiFi
 
-// Server configuration
-const char* SERVER_IP   = "192.168.56.197";   // ← Ganti dengan IP server Node.js
+// Server configuration (HTTP API + MQTT Broker Aedes di mesin yang sama)
+const char* SERVER_IP   = "10.51.134.197";   // ← Ganti dengan IP server Node.js
 const int   SERVER_PORT = 3000;
+const int   MQTT_PORT   = 1883;               // Port broker Aedes di server
 const char* BIN_ID      = "bin-001";
 
 // Servo configuration
@@ -61,7 +62,7 @@ const char* BIN_ID      = "bin-001";
 #define ECHO_ANORGANIK  2      // ECHO sensor bin Anorganik
 
 // Parameter fisik bin
-#define BIN_DEPTH_CM    26.0   // Jarak sensor ke dasar bin (cm)
+#define BIN_DEPTH_CM    19.5   // Jarak sensor ke dasar bin (cm)
 #define MIN_DISTANCE_CM 2.0    // Jarak minimum sensor (cm)
 
 // Timing
@@ -102,6 +103,85 @@ PubSubClient mqttClient(espClient);
 Servo servo;
 bool cameraReady = false;
 unsigned long lastTriggerTime = 0;  // Untuk cooldown
+unsigned long lastWiFiReconnectAttempt = 0; // Untuk non-blocking WiFi reconnect
+
+void mqttCallback(char *topic, byte *payload, unsigned int length)
+{
+  String message;
+  for (int i = 0; i < length; i++)
+  {
+    message += (char)payload[i];
+  }
+
+  Serial.println("\n📥 [MQTT] Pesan masuk di topik: " + String(topic));
+  Serial.println("   Payload: " + message);
+
+  // Parse JSON
+  JsonDocument doc;
+  deserializeJson(doc, message);
+  String jenis = doc["jenis"] | "Unknown";
+
+  if (jenis == "Organik")
+  {
+    Serial.println("   🟢 Servo → ORGANIK");
+    servo.write(SERVO_ORGANIK);
+  }
+  else if (jenis == "Anorganik")
+  {
+    Serial.println("   🔴 Servo → ANORGANIK");
+    servo.write(SERVO_ANORGANIK);
+  }
+
+  delay(SERVO_HOLD_MS);
+  servo.write(SERVO_NETRAL);
+  Serial.println("   ⬜ Servo → NETRAL");
+
+  Serial.println("   📏 Mengukur kedalaman bin setelah sampah masuk...");
+  measureAndSendBinLevels();
+}
+
+unsigned long lastMqttReconnectAttempt = 0;
+
+void reconnectMQTT()
+{
+  // Jangan coba connect MQTT jika WiFi belum tersambung
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  // Non-blocking: coba reconnect maksimal 1x setiap 5 detik
+  unsigned long now = millis();
+  if (now - lastMqttReconnectAttempt < 5000) {
+    return; // Belum waktunya coba lagi
+  }
+  lastMqttReconnectAttempt = now;
+
+  Serial.print("🔄 Menghubungkan ke MQTT Broker (Aedes)...");
+  
+  // Set Last Will and Testament (LWT): jika putus tiba-tiba, broker publish status offline
+  const char* statusTopic = "smartbin/status";
+  const char* willMessage = "{\"is_online\":false,\"binId\":\"bin-001\"}";
+  uint8_t willQos = 1;
+  bool willRetain = true;
+
+  if (mqttClient.connect(BIN_ID, statusTopic, willQos, willRetain, willMessage))
+  {
+    Serial.println(" Berhasil!");
+    mqttClient.subscribe("smartbin/kontrol/servo");
+
+    // Kirim status online segera setelah berhasil terhubung
+    String ipStr = WiFi.localIP().toString();
+    int rssi = WiFi.RSSI();
+    String onlineMessage = "{\"is_online\":true,\"wifi_status\":\"connected\",\"ssid\":\"" + String(WIFI_SSID) + "\",\"ip\":\"" + ipStr + "\",\"rssi\":" + String(rssi) + ",\"binId\":\"" + String(BIN_ID) + "\"}";
+    mqttClient.publish(statusTopic, onlineMessage.c_str(), true); // true = retained
+  }
+  else
+  {
+    Serial.print(" Gagal, rc=");
+    Serial.print(mqttClient.state());
+    Serial.println(" Coba lagi dalam 5 detik...");
+  }
+}
 
 void mqttCallback(char *topic, byte *payload, unsigned int length)
 {
@@ -173,7 +253,7 @@ void setup() {
 
   // Init LED (nyala terus untuk menerangi objek)
   pinMode(LED_FLASH, OUTPUT);
-  digitalWrite(LED_FLASH, HIGH);
+  digitalWrite(LED_FLASH, LOW);
 
   // Init IR sensor
   pinMode(IR_SENSOR_PIN, INPUT);
@@ -200,8 +280,10 @@ void setup() {
   // Connect WiFi
   connectWiFi();
 
-  mqttClient.setServer(SERVER_IP, 1883);
+  // Setup MQTT → Broker Aedes di server Node.js (tanpa TLS)
+  mqttClient.setServer(SERVER_IP, MQTT_PORT);
   mqttClient.setCallback(mqttCallback);
+  mqttClient.setBufferSize(512);  // Buffer lebih besar untuk JSON payload
 
   // Ukur bin level awal
   Serial.println("\n📏 Pengukuran awal level bin...");
@@ -221,6 +303,14 @@ void setup() {
 // ============================================================================
 
 void loop() {
+  // ── 1. MQTT harus selalu diproses terlebih dahulu ──
+  //    Agar callback servo (mqttCallback) selalu responsif
+  if (!mqttClient.connected()) {
+    reconnectMQTT();
+  }
+  mqttClient.loop();
+
+  // ── 2. Cek prasyarat ──
   if (!cameraReady) {
     Serial.println("❌ Camera not ready");
     delay(5000);
@@ -229,8 +319,18 @@ void loop() {
 
   // Check WiFi connection
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("⚠️  WiFi disconnected, reconnecting...");
-    connectWiFi();
+    unsigned long now = millis();
+    if (now - lastWiFiReconnectAttempt > 10000) { // Coba hubungkan kembali setiap 10 detik
+      lastWiFiReconnectAttempt = now;
+      Serial.println("⚠️ WiFi terputus. Menghubungkan kembali secara non-blocking...");
+      WiFi.disconnect(true);
+      delay(100);
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+      WiFi.setSleep(false);
+    }
+    delay(SCAN_INTERVAL);
+    return; // Keluar dari loop karena koneksi terputus
   }
 
   // Check cooldown
@@ -239,7 +339,7 @@ void loop() {
     return;
   }
 
-  // Cek IR sensor: ada objek di depan kamera?
+  // ── 3. Cek IR sensor: ada objek di depan kamera? ──
   if (checkObjectPresence()) {
     Serial.println("\n🔔 OBJEK TERDETEKSI oleh IR sensor!");
     
@@ -247,14 +347,14 @@ void loop() {
     for (int i = 3; i > 0; i--) {
       Serial.printf("⏳ Mengambil foto dalam %d detik...\n", i);
       delay(1000);
+      mqttClient.loop(); // Tetap proses MQTT selama countdown
     }
     
     // Capture dilakukan HANYA jika objek masih ada di depan sensor setelah delay 3 detik
-    // Ini memastikan kita tidak memotret barang yang sudah dilewati atau tangan yang lewat secara tidak sengaja
     if (checkObjectPresence()) {
       lastTriggerTime = millis();
 
-      // 1. Capture + classify + servo
+      // Capture + classify + servo
       Serial.println("📸 Capturing image...");
       classifyAndSort();
 
@@ -508,7 +608,12 @@ void initCamera() {
 // ============================================================================
 
 void connectWiFi() {
-  Serial.print("📶 Connecting to WiFi: " + String(WIFI_SSID));
+  Serial.println("\n📶 Connecting to WiFi: " + String(WIFI_SSID));
+
+  // Matikan koneksi sebelumnya dan set mode ke Station secara eksplisit
+  WiFi.disconnect(true);
+  delay(1000);
+  WiFi.mode(WIFI_STA);
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   WiFi.setSleep(false);
@@ -544,11 +649,15 @@ void classifyAndSort()
     fbTemp = NULL;
   }
 
+  digitalWrite(LED_FLASH, HIGH);
   // Berikan delay sangat singkat (100ms) agar sensor kamera sempat menyesuaikan pencahayaan/eksposur otomatis
   delay(100);
 
   // 2. Capture image yang sesungguhnya (Fresh Frame!)
   camera_fb_t *fb = esp_camera_fb_get();
+  
+  digitalWrite(LED_FLASH, LOW);
+
   if (!fb)
   {
     Serial.println("❌ Camera capture failed!");
