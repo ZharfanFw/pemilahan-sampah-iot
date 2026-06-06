@@ -35,7 +35,6 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
-  const [imgTimestamp, setImgTimestamp] = useState(Date.now());
 
   // State untuk Real-time AI Camera Feed & Scanning
   const [latestWaste, setLatestWaste] = useState(null);
@@ -43,16 +42,21 @@ export default function Dashboard() {
   const [isScanning, setIsScanning] = useState(false);
   const [showResult, setShowResult] = useState(false);
 
+  const [isCameraOffline, setIsCameraOffline] = useState(true); // Default awalnya TRUE
+  const [imgTimestamp, setImgTimestamp] = useState(Date.now());
+
   // Fetch data dari API backend
   const fetchData = useCallback(async () => {
     try {
-      setError(null);
-
+      // Ambil data dari API
       const [binRes, statsRes, latestRes] = await Promise.all([
         getBinStatus("bin-001"),
         getWasteStats("today", "bin-001"),
         getWasteLatest(),
       ]);
+
+      // Jika berhasil sampai sini, hapus error global dashboard
+      setError(null);
 
       if (binRes.success) {
         setBinStatus(binRes.data);
@@ -67,18 +71,15 @@ export default function Dashboard() {
         setLatestWaste(currentWaste);
 
         setPrevTimestamp((prev) => {
-          // Pertama kali load dashboard, simpan timestamp dasar saja tanpa animasi scanning
           if (prev === 0) {
             setShowResult(true);
             return currentWaste.timestamp;
           }
 
-          // Jika ada data klasifikasi sampah baru masuk
           if (currentWaste.timestamp > prev) {
             setIsScanning(true);
             setShowResult(false);
 
-            // Tampilkan animasi scanning laser selama 800ms, baru tampilkan bounding box AI
             setTimeout(() => {
               setIsScanning(false);
               setShowResult(true);
@@ -86,7 +87,6 @@ export default function Dashboard() {
 
             return currentWaste.timestamp;
           }
-
           return prev;
         });
       } else if (latestRes.success && !latestRes.data) {
@@ -94,6 +94,8 @@ export default function Dashboard() {
       }
 
       setLastUpdate(new Date());
+
+      // ✅ PENTING: Hanya pemicu gambar di-refresh jika request API di atas sukses!
       setImgTimestamp(Date.now());
     } catch (err) {
       console.error("Gagal fetch data dashboard:", err);
@@ -308,7 +310,9 @@ export default function Dashboard() {
                   <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
                     Kapasitas Bin
                   </h3>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${isBinFull ? "bg-red-200 text-red-800 animate-pulse" : "bg-gray-100 text-gray-600"}`}>
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${isBinFull ? "bg-red-200 text-red-800 animate-pulse" : "bg-gray-100 text-gray-600"}`}
+                  >
                     Max: {capacity}%
                   </span>
                 </div>
@@ -322,7 +326,8 @@ export default function Dashboard() {
                         Organik
                       </span>
                       <span className="text-gray-700">
-                        {capacityOrganik}% {distOrganik > 0 ? `(${distOrganik} cm)` : ""}
+                        {capacityOrganik}%{" "}
+                        {distOrganik > 0 ? `(${distOrganik} cm)` : ""}
                       </span>
                     </div>
                     <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
@@ -341,7 +346,8 @@ export default function Dashboard() {
                         Anorganik
                       </span>
                       <span className="text-gray-700">
-                        {capacityAnorganik}% {distAnorganik > 0 ? `(${distAnorganik} cm)` : ""}
+                        {capacityAnorganik}%{" "}
+                        {distAnorganik > 0 ? `(${distAnorganik} cm)` : ""}
                       </span>
                     </div>
                     <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
@@ -402,36 +408,53 @@ export default function Dashboard() {
                   <h3 className="text-lg font-bold text-gray-800">
                     Kamera Deteksi AI (Real-time)
                   </h3>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 animate-pulse">
-                    <span className="w-1.5 h-1.5 bg-red-500 rounded-full mr-1.5"></span>
-                    LIVE FEED
-                  </span>
+
+                  {/* ✅ PERBAIKAN: Indikator Status Dinamis */}
+                  {isCameraOffline ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-500">
+                      <span className="w-1.5 h-1.5 bg-gray-400 rounded-full mr-1.5"></span>
+                      OFFLINE
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 animate-pulse">
+                      <span className="w-1.5 h-1.5 bg-red-500 rounded-full mr-1.5"></span>
+                      LIVE FEED
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex-1 flex flex-col items-center justify-center bg-black rounded-lg overflow-hidden relative group aspect-square lg:aspect-auto lg:h-72 shadow-inner border border-gray-900">
-                  {/* The camera image */}
+                  {/* The camera image dengan logika URL Dinamis */}
                   <img
-                    src={`http://localhost:3000/uploads/latest.jpg?t=${imgTimestamp}`}
+                    src={
+                      isCameraOffline
+                        ? "https://placehold.co/600x400/111827/4b5563?text=KAMERA+OFFLINE"
+                        : `http://localhost:3000/uploads/latest.jpg?t=${imgTimestamp}`
+                    }
                     alt="Terdeteksi Terakhir"
-                    className="w-full h-full object-cover"
-                    onError={(e) => {
-                      e.target.onerror = null;
-                      e.target.src = "https://placehold.co/600x400/111827/4b5563?text=Koneksi+Kamera...";
+                    className={`w-full h-full object-cover transition-all duration-300 ${
+                      isCameraOffline ? "opacity-70 grayscale" : "opacity-100"
+                    }`}
+                    onLoad={(e) => {
+                      // ✅ HANYA set online jika gambar yang berhasil di-load berasal dari localhost
+                      if (e.target.src.includes("localhost:3000")) {
+                        setIsCameraOffline(false);
+                      }
+                    }}
+                    onError={() => {
+                      // ✅ Jika request ke localhost 3000 gagal/404, langsung kunci ke status OFFLINE
+                      setIsCameraOffline(true);
                     }}
                   />
 
-                  {/* 1. SCANNING LASER EFFECT (when isScanning is true) */}
-                  {isScanning && (
+                  {/* SCANNING LASER EFFECT - ✅ Hanya tampil jika kamera ONLINE */}
+                  {isScanning && !isCameraOffline && (
                     <>
-                      {/* Laser Line */}
-                      <div className="absolute left-0 right-0 h-1 bg-green-500 shadow-[0_0_15px_#22c55e] pointer-events-none" 
-                           style={{
-                             animation: "scan 1.5s ease-in-out infinite"
-                           }}
+                      <div
+                        className="absolute left-0 right-0 h-1 bg-green-500 shadow-[0_0_15px_#22c55e] pointer-events-none"
+                        style={{ animation: "scan 1.5s ease-in-out infinite" }}
                       />
-                      {/* Grid Pattern overlay */}
                       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_20%,rgba(0,0,0,0.4))] pointer-events-none" />
-                      {/* Scanning status banner */}
                       <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xs">
                         <div className="w-10 h-10 border-4 border-green-500 border-t-transparent rounded-full animate-spin mb-2"></div>
                         <span className="text-green-400 font-mono text-xs tracking-widest font-bold uppercase animate-pulse">
@@ -441,34 +464,41 @@ export default function Dashboard() {
                     </>
                   )}
 
-                  {/* 2. OBJECT DETECTION BOUNDING BOXES (when showResult is true and we have latestWaste) */}
-                  {showResult && latestWaste && (
+                  {/* OBJECT DETECTION BOUNDING BOXES - ✅ Hanya tampil jika kamera ONLINE */}
+                  {showResult && latestWaste && !isCameraOffline && (
                     <div className="absolute inset-0 pointer-events-none">
-                      {/* Bounding Box 1: Simulated Main Object */}
-                      <div 
-                        className={`absolute border-3 rounded-lg shadow-lg flex flex-col justify-between transition-all duration-300`}
+                      <div
+                        className="absolute border-3 rounded-lg shadow-lg flex flex-col justify-between transition-all duration-300"
                         style={{
                           left: "20%",
                           top: "20%",
                           width: "60%",
                           height: "60%",
-                          borderColor: latestWaste.jenis === "Organik" ? "#22c55e" : "#3b82f6",
-                          boxShadow: latestWaste.jenis === "Organik" ? "0 0 20px rgba(34,197,94,0.5)" : "0 0 20px rgba(59,130,246,0.5)",
+                          borderColor:
+                            latestWaste.jenis === "Organik"
+                              ? "#22c55e"
+                              : "#3b82f6",
+                          boxShadow:
+                            latestWaste.jenis === "Organik"
+                              ? "0 0 20px rgba(34,197,94,0.5)"
+                              : "0 0 20px rgba(59,130,246,0.5)",
                         }}
                       >
-                        {/* Label Tag on top-left of box */}
-                        <div 
+                        <div
                           className="absolute -top-7 -left-[3px] px-2 py-0.5 rounded-t-md text-[11px] font-mono font-bold text-white flex items-center gap-1 shadow-md"
                           style={{
-                            backgroundColor: latestWaste.jenis === "Organik" ? "#22c55e" : "#3b82f6",
+                            backgroundColor:
+                              latestWaste.jenis === "Organik"
+                                ? "#22c55e"
+                                : "#3b82f6",
                           }}
                         >
                           <span>{latestWaste.jenis.toUpperCase()}</span>
-                          <span>{(latestWaste.confidence * 100).toFixed(1)}%</span>
+                          <span>
+                            {(latestWaste.confidence * 100).toFixed(1)}%
+                          </span>
                         </div>
                       </div>
-
-                      {/* Small corner decorative items like standard AI interfaces */}
                       <div className="absolute top-2 left-2 text-[9px] font-mono text-gray-400">
                         FPS: 15.2 | RES: 320x240
                       </div>
@@ -479,17 +509,33 @@ export default function Dashboard() {
                   )}
 
                   {/* Bottom overlay status info */}
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/75 backdrop-blur-xs text-white text-xs p-3 flex justify-between items-center">
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/75 backdrop-blur-xs text-white text-xs p-3 flex justify-between items-center z-10">
                     <div className="flex flex-col">
                       <span className="font-semibold text-gray-200">
-                        {showResult && latestWaste ? `Terakhir: ${latestWaste.jenis}` : "Siap mendeteksi..."}
+                        {isCameraOffline
+                          ? "Koneksi kamera terputus"
+                          : showResult && latestWaste
+                            ? `Terakhir: ${latestWaste.jenis}`
+                            : "Siap mendeteksi..."}
                       </span>
                       <span className="text-[10px] text-gray-400">
-                        {showResult && latestWaste ? new Date(latestWaste.timestamp).toLocaleTimeString("id-ID") : "Menunggu objek masuk..."}
+                        {isCameraOffline
+                          ? "Periksa script Python AI"
+                          : showResult && latestWaste
+                            ? new Date(
+                                latestWaste.timestamp,
+                              ).toLocaleTimeString("id-ID")
+                            : "Menunggu objek masuk..."}
                       </span>
                     </div>
-                    <span className="text-[10px] bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded font-semibold">
-                      AUTO
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded font-semibold border ${
+                        isCameraOffline
+                          ? "bg-gray-500/20 text-gray-400 border-gray-500/30"
+                          : "bg-green-500/20 text-green-400 border-green-500/30"
+                      }`}
+                    >
+                      {isCameraOffline ? "OFFLINE" : "AUTO"}
                     </span>
                   </div>
                 </div>

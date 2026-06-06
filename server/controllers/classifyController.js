@@ -90,15 +90,15 @@ const classifyController = {
       // Publish to MQTT
       try {
         if (mqttService && mqttService.connected) {
-          mqttService.publish("smartbin/classification", {
+          // Ubah topik menjadi smartbin/kontrol/servo
+          mqttService.publish("smartbin/kontrol/servo", {
             jenis: result.jenis,
             confidence: result.confidence,
             binId,
-            timestamp,
           });
         }
       } catch (mqttError) {
-        logger.error("Failed to publish to MQTT (non-critical)", mqttError);
+        logger.error("Failed to publish to MQTT", mqttError);
       }
 
       // Send response to ESP32-CAM

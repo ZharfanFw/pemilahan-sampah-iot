@@ -92,14 +92,51 @@ const wasteController = {
   },
 
   // Get waste statistics
+  // Get waste statistics
   getStats: async (req, res) => {
     try {
       const { period = "today", binId = "bin-001" } = req.query;
 
-      const statsPath = `bins/${binId}/stats/${period}`;
-      const stats = await getData(statsPath);
+      // ✅ PERBAIKAN: Jika yang diminta adalah "today", hitung langsung dari data histori hari ini
+      if (period === "today") {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, "0");
+        const day = String(today.getDate()).padStart(2, "0");
 
-      if (!stats) {
+        const todayPath = `sampah/${year}-${month}/${day}`;
+        const snapshot = await db.ref(todayPath).once("value");
+        const data = snapshot.val();
+
+        let total = 0;
+        let organik = 0;
+        let anorganik = 0;
+
+        if (data) {
+          const wasteArray = Object.values(data);
+          total = wasteArray.length;
+          // Hitung organik dan anorganik dengan filter
+          organik = wasteArray.filter(
+            (w) => w.jenis && w.jenis.toLowerCase() === "organik",
+          ).length;
+          anorganik = wasteArray.filter(
+            (w) => w.jenis && w.jenis.toLowerCase() === "anorganik",
+          ).length;
+        }
+
+        return res.json({
+          success: true,
+          data: { total, organik, anorganik },
+          period,
+        });
+      }
+
+      // Jika periodenya bukan "today" (misal weekly/monthly), biarkan pakai cara lama
+      const statsPath = `bins/${binId}/stats/${period}`;
+      const stats = await db.ref(statsPath).once("value");
+      const statsData = stats.val();
+
+      if (!statsData) {
         return res.json({
           success: true,
           data: {
@@ -113,7 +150,7 @@ const wasteController = {
 
       res.json({
         success: true,
-        data: stats,
+        data: statsData,
         period,
       });
     } catch (error) {

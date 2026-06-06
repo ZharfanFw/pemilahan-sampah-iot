@@ -1,239 +1,89 @@
+const { Aedes } = require("aedes");
+const aedes = new Aedes();
+const net = require("net");
 const mqtt = require("mqtt");
+const { db, setData } = require("../config/firebase");
 const MQTT_CONFIG = require("../config/mqtt");
-const { db, updateData, setData } = require("../config/firebase");
-const logger = require("../utils/logger");
 
-class MQTTService {
-  constructor() {
-    this.client = null;
-    this.connected = false;
-  }
+const MQTT_PORT = 1883;
 
-  connect() {
-    logger.info(`Connecting to MQTT broker: ${MQTT_CONFIG.brokerUrl}`);
+// 1. Jalankan MQTT Broker Lokal
+const server = net.createServer(aedes.handle);
+server.listen(MQTT_PORT, function () {
+  console.log(`✅ MQTT Broker running on port ${MQTT_PORT}`);
+});
 
-    this.client = mqtt.connect(MQTT_CONFIG.brokerUrl, MQTT_CONFIG.options);
+// ============================================================================
+// 👇 FITUR BARU: Deteksi ESP32 Terhubung / Terputus (Online/Offline)
+// ============================================================================
 
-    this.client.on("connect", () => {
-      this.connected = true;
-      logger.success("MQTT broker connected");
-
-      // Update system status
-      updateData("system/mqtt_status", {
-        broker_connected: true,
-        last_message: Date.now(),
-      });
-
-      // Subscribe to all smartbin topics
-      this.client.subscribe(MQTT_CONFIG.topics.all, (err) => {
-        if (err) {
-          logger.error("Failed to subscribe to topics", err);
-        } else {
-          logger.success(`Subscribed to: ${MQTT_CONFIG.topics.all}`);
-        }
-      });
-    });
-
-    this.client.on("message", async (topic, message) => {
-      try {
-        const payload = JSON.parse(message.toString());
-        logger.mqtt(`Received on ${topic}: ${JSON.stringify(payload)}`);
-
-        await this.handleMessage(topic, payload);
-      } catch (error) {
-        logger.error(`Error parsing message from ${topic}`, error);
-      }
-    });
-
-    this.client.on("error", (error) => {
-      logger.error("MQTT connection error", error);
-      this.connected = false;
-
-      updateData("system/mqtt_status", {
-        broker_connected: false,
-        last_error: error.message,
-      });
-    });
-
-    this.client.on("offline", () => {
-      logger.warning("MQTT client offline");
-      this.connected = false;
-    });
-
-    this.client.on("reconnect", () => {
-      logger.info("Reconnecting to MQTT broker...");
-    });
-  }
-
-  async handleMessage(topic, payload) {
-    const now = Date.now();
-
-    switch (topic) {
-      case MQTT_CONFIG.topics.classification:
-        await this.handleClassification(payload, now);
-        break;
-
-      case MQTT_CONFIG.topics.capacity:
-        await this.handleCapacity(payload, now);
-        break;
-
-      case MQTT_CONFIG.topics.status:
-        await this.handleStatus(payload, now);
-        break;
-
-      default:
-        logger.warning(`Unknown topic: ${topic}`);
-    }
-
-    // Update last message timestamp
-    await updateData("system/mqtt_status", {
-      last_message: now,
-    });
-  }
-
-  async handleClassification(payload, timestamp) {
+// Saat ESP32 berhasil connect ke Broker
+aedes.on("client", async (client) => {
+  if (client.id && client.id.startsWith("bin-")) {
+    console.log(`🟢 [Status] Alat ${client.id} ONLINE`);
     try {
-      const { jenis, confidence, binId = "bin-001" } = payload;
-
-      // Validate data
-      if (!jenis || !confidence) {
-        logger.warning("Invalid classification data received");
-        return;
-      }
-
-      // Save to sampah collection (organized by date)
-      const date = new Date(timestamp);
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-
-      const wasteId = `${timestamp}_${Math.random().toString(36).substr(2, 9)}`;
-      const wastePath = `sampah/${year}-${month}/${day}/${wasteId}`;
-
-      await setData(wastePath, {
-        jenis,
-        confidence: parseFloat(confidence),
-        timestamp,
-        binId,
-        imageUrl: null,
-      });
-
-      logger.success(`Waste classified: ${jenis} (${confidence})`);
-
-      // Update bin stats
-      await this.updateBinStats(binId, jenis);
-    } catch (error) {
-      logger.error("Error handling classification", error);
+      // ✅ Ubah path untuk spesifik mengupdate nilai is_online menjadi boolean true
+      await setData(`bins/${client.id}/status/is_online`, true);
+    } catch (err) {
+      console.error("Gagal update status online:", err);
     }
   }
+});
 
-  async handleCapacity(payload, timestamp) {
+// Saat ESP32 mati, hilang WiFi, atau terputus
+aedes.on("clientDisconnect", async (client) => {
+  if (client.id && client.id.startsWith("bin-")) {
+    console.log(`🔴 [Status] Alat ${client.id} OFFLINE`);
     try {
-      const { level_cm, kapasitas_persen, binId = "bin-001" } = payload;
-
-      // Determine status based on capacity
-      let status = "normal";
-      if (kapasitas_persen >= 90) {
-        status = "full";
-      } else if (kapasitas_persen >= 75) {
-        status = "warning";
-      }
-
-      // Update bin status
-      await updateData(`bins/${binId}/status`, {
-        kapasitas_persen: parseFloat(kapasitas_persen),
-        level_cm: parseFloat(level_cm),
-        status,
-        lastUpdate: timestamp,
-      });
-
-      logger.info(`Bin capacity updated: ${kapasitas_persen}% (${status})`);
-
-      // Create alert if bin is full
-      if (status === "full") {
-        await this.createAlert(
-          binId,
-          "bin_full",
-          `Tempat sampah penuh (${kapasitas_persen}%)`,
-          timestamp,
-        );
-      }
-    } catch (error) {
-      logger.error("Error handling capacity", error);
+      // ✅ Ubah path untuk spesifik mengupdate nilai is_online menjadi boolean false
+      await setData(`bins/${client.id}/status/is_online`, false);
+    } catch (err) {
+      console.error("Gagal update status offline:", err);
     }
   }
+});
 
-  async handleStatus(payload, timestamp) {
+// ============================================================================
+
+// 2. Hubungkan Node.js MQTT Client internal ke Broker
+const client = mqtt.connect(MQTT_CONFIG.brokerUrl, {
+  clientId: MQTT_CONFIG.clientId,
+  ...MQTT_CONFIG.options,
+});
+
+client.on("connect", () => {
+  console.log("✅ Node.js Internal MQTT Client connected!");
+  client.subscribe(MQTT_CONFIG.topics.sensorLevel);
+});
+
+client.on("message", async (topic, message) => {
+  if (topic === MQTT_CONFIG.topics.sensorLevel) {
     try {
-      const { servo_position, is_online, binId = "bin-001" } = payload;
+      const payload = JSON.parse(message.toString());
+      console.log(
+        `📥 [MQTT Broker] Menerima data sensor: ${message.toString()}`,
+      );
 
-      await updateData(`bins/${binId}/status`, {
-        servo_position: parseInt(servo_position),
-        is_online: Boolean(is_online),
-        lastUpdate: timestamp,
+      const { binId, organik_persen, anorganik_persen } = payload;
+      await setData(`bins/${binId}/level`, {
+        organik_persen,
+        anorganik_persen,
+        timestamp: Date.now(),
       });
-
-      logger.info(`System status updated: ${is_online ? "Online" : "Offline"}`);
     } catch (error) {
-      logger.error("Error handling status", error);
+      console.error("❌ Error parsing MQTT message:", error);
     }
   }
+});
 
-  async updateBinStats(binId, jenis) {
-    try {
-      const statsRef = db.ref(`bins/${binId}/stats/today`);
-      const snapshot = await statsRef.once("value");
-      const stats = snapshot.val() || { total: 0, organik: 0, anorganik: 0 };
-
-      // Increment counters
-      stats.total += 1;
-      if (jenis === "Organik") {
-        stats.organik += 1;
-      } else if (jenis === "Anorganik") {
-        stats.anorganik += 1;
-      }
-
-      await statsRef.update(stats);
-    } catch (error) {
-      logger.error("Error updating bin stats", error);
+module.exports = {
+  connected: true,
+  publish: (topic, payload) => {
+    if (client.connected) {
+      client.publish(topic, JSON.stringify(payload));
+      console.log(
+        `📤 [MQTT Broker] Mem-publish ke ${topic}: ${JSON.stringify(payload)}`,
+      );
     }
-  }
-
-  async createAlert(binId, type, message, timestamp) {
-    try {
-      const alertPath = `alerts/${binId}/${timestamp}`;
-
-      await setData(alertPath, {
-        type,
-        message,
-        severity: type === "bin_full" ? "warning" : "info",
-        timestamp,
-        resolved: false,
-      });
-
-      logger.warning(`Alert created: ${message}`);
-    } catch (error) {
-      logger.error("Error creating alert", error);
-    }
-  }
-
-  publish(topic, message) {
-    if (!this.connected) {
-      logger.error("Cannot publish: MQTT not connected");
-      return false;
-    }
-
-    this.client.publish(topic, JSON.stringify(message), { qos: 1 });
-    logger.mqtt(`Published to ${topic}: ${JSON.stringify(message)}`);
-    return true;
-  }
-
-  disconnect() {
-    if (this.client) {
-      this.client.end();
-      logger.info("MQTT client disconnected");
-    }
-  }
-}
-
-module.exports = new MQTTService();
+  },
+};
