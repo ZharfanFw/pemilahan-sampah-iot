@@ -42,7 +42,7 @@ export default function Dashboard() {
   const [isScanning, setIsScanning] = useState(false);
   const [showResult, setShowResult] = useState(false);
 
-  const [isCameraOffline, setIsCameraOffline] = useState(true); // Default awalnya TRUE
+  const isCameraOffline = binStatus?.status?.is_online === true ? false : true;
   const [imgTimestamp, setImgTimestamp] = useState(Date.now());
 
   // Fetch data dari API backend
@@ -60,6 +60,8 @@ export default function Dashboard() {
 
       if (binRes.success) {
         setBinStatus(binRes.data);
+        // Jangan set isCameraOffline berdasarkan is_online
+        // Biarkan onLoad/onError dari <img> yang menentukan
       }
 
       if (statsRes.success) {
@@ -406,7 +408,7 @@ export default function Dashboard() {
 
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-bold text-gray-800">
-                    Kamera Deteksi AI (Real-time)
+                    Tangkapan Kamera
                   </h3>
 
                   {/* ✅ PERBAIKAN: Indikator Status Dinamis */}
@@ -424,21 +426,13 @@ export default function Dashboard() {
                 </div>
 
                 <div className="flex-1 flex flex-col items-center justify-center bg-black rounded-lg overflow-hidden relative group aspect-square lg:aspect-auto lg:h-72 shadow-inner border border-gray-900">
-                  {/* The camera image */}
+                  {/* The camera image dengan logika URL Dinamis */}
                   <img
                     src={`http://${window.location.hostname}:3000/uploads/latest.jpg?t=${imgTimestamp}`}
                     alt="Terdeteksi Terakhir"
                     className={`w-full h-full object-cover transition-all duration-300 ${
                       isCameraOffline ? "opacity-0 absolute pointer-events-none" : "opacity-100"
                     }`}
-                    onLoad={(e) => {
-                      if (e.target.src.includes(`${window.location.hostname}:3000`)) {
-                        setIsCameraOffline(false);
-                      }
-                    }}
-                    onError={() => {
-                      setIsCameraOffline(true);
-                    }}
                   />
 
                   {/* Placeholder overlay ketika offline */}
