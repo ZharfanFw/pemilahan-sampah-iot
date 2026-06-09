@@ -44,12 +44,17 @@ app.get("/", (req, res) => res.send("API SmartBin Server Running..."));
 app.listen(PORT, async () => {
   console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
 
-  // 1. Broker dulu
+  // 1. Jalankan Aedes Broker terlebih dahulu
   await startBroker();
 
-  // 2. Baru client connect ke broker
-  mqttService.connect();
-  console.log("📡 MQTT Client connecting...");
+  // 2. Hubungkan MQTT Client ke broker
+  // TANGKAP objek client-nya ke dalam variabel (pastikan mqttService.connect() mengembalikan objek client)
+  const mqttClient = mqttService.connect();
+
+  // DAFTARKAN ke Express agar bisa diintip oleh routes/bins.js via req.app.get
+  app.set("mqttClient", mqttClient);
+
+  console.log("📡 MQTT Client connecting & registered to Express...");
 
   // 3. Load model AI
   console.log("🤖 Memulai load model AI...");

@@ -60,11 +60,38 @@ export default function Pengaturan() {
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
-    // Simpan kalibrasi — bisa diperluas nanti ke API POST
-    setTimeout(() => {
+    try {
+      // Ambil token auth dari localStorage untuk validasi keamanan backend
+      const token = localStorage.getItem("token");
+
+      const response = await fetch(
+        "http://192.168.137.1:3000/api/bins/config",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            binId: "bin-001",
+            tinggiMaks: Number(config.tinggiMaks),
+            batasPenuh: Number(config.batasPenuh),
+          }),
+        },
+      );
+
+      const result = await response.json();
+      if (response.ok) {
+        alert("Konfigurasi kalibrasi berhasil dikirim ke perangkat!");
+      } else {
+        alert(`Gagal menyimpan: ${result.message || "Terjadi kesalahan"}`);
+      }
+    } catch (err) {
+      console.error("Error saving config:", err);
+      alert("Gagal terhubung ke server backend.");
+    } finally {
       setSaving(false);
-      alert("Konfigurasi berhasil disimpan!");
-    }, 500);
+    }
   };
 
   // Derived values

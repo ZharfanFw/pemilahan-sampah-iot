@@ -329,7 +329,12 @@ export default function Dashboard() {
                       </span>
                       <span className="text-gray-700">
                         {capacityOrganik}%{" "}
-                        {distOrganik > 0 ? `(${distOrganik} cm)` : ""}
+                        {/* HANYA TAMPIL CM JIKA KAPASITAS > 0 DAN JARAK VALID (<= 19.5 CM) */}
+                        {capacityOrganik > 0 &&
+                        distOrganik > 0 &&
+                        distOrganik <= 19.5
+                          ? `(${distOrganik} cm)`
+                          : ""}
                       </span>
                     </div>
                     <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
@@ -349,7 +354,12 @@ export default function Dashboard() {
                       </span>
                       <span className="text-gray-700">
                         {capacityAnorganik}%{" "}
-                        {distAnorganik > 0 ? `(${distAnorganik} cm)` : ""}
+                        {/* HANYA TAMPIL CM JIKA KAPASITAS > 0 DAN JARAK VALID (<= 19.5 CM) */}
+                        {capacityAnorganik > 0 &&
+                        distAnorganik > 0 &&
+                        distAnorganik <= 19.5
+                          ? `(${distAnorganik} cm)`
+                          : ""}
                       </span>
                     </div>
                     <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
@@ -431,7 +441,9 @@ export default function Dashboard() {
                     src={`http://${window.location.hostname}:3000/uploads/latest.jpg?t=${imgTimestamp}`}
                     alt="Terdeteksi Terakhir"
                     className={`w-full h-full object-cover transition-all duration-300 ${
-                      isCameraOffline ? "opacity-0 absolute pointer-events-none" : "opacity-100"
+                      isCameraOffline
+                        ? "opacity-0 absolute pointer-events-none"
+                        : "opacity-100"
                     }`}
                   />
 
@@ -451,8 +463,12 @@ export default function Dashboard() {
                           d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
                         />
                       </svg>
-                      <span className="text-sm font-semibold tracking-wider">KAMERA OFFLINE</span>
-                      <span className="text-[10px] text-gray-500 mt-1">Menunggu feed gambar dari ESP32-CAM...</span>
+                      <span className="text-sm font-semibold tracking-wider">
+                        KAMERA OFFLINE
+                      </span>
+                      <span className="text-[10px] text-gray-500 mt-1">
+                        Menunggu feed gambar dari ESP32-CAM...
+                      </span>
                     </div>
                   )}
 

@@ -9,8 +9,8 @@ const MQTT_CONFIG = {
     connectTimeout: 30000,
   },
   topics: {
-    kontrolServo: "smartbin/kontrol/servo", // Server → ESP32
-    sensorLevel: "smartbin/sensor/level", // ESP32 → Server
+    kontrolServo: "smartbin/kontrol/servo",
+    sensorLevel: "smartbin/sensor/level",
     status: "smartbin/status",
   },
 };
