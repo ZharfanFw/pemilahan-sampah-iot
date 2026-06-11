@@ -37,11 +37,11 @@
 // ============================================================================
 
 // WiFi credentials
-const char* WIFI_SSID     = "cipaa";              // ← Ganti dengan SSID WiFi
-const char* WIFI_PASSWORD = "yanyanyan";   // ← Ganti dengan password WiFi
+const char* WIFI_SSID     = "Maul";              // ← Ganti dengan SSID WiFi
+const char* WIFI_PASSWORD = "satusampedelapan";   // ← Ganti dengan password WiFi
 
 // Server configuration (HTTP API + MQTT Broker Aedes di mesin yang sama)
-const char* SERVER_IP   = "10.51.134.197";   // ← Ganti dengan IP server Node.js
+const char* SERVER_IP   = "192.168.14.197";   // ← Ganti dengan IP server Node.js
 const int   SERVER_PORT = 3000;
 const int   MQTT_PORT   = 1883;               // Port broker Aedes di server
 const char* BIN_ID      = "bin-001";

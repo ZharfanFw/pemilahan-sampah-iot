@@ -73,3 +73,10 @@ env/
 # Uploaded images / camera captures
 server/uploads/*
 !server/uploads/.gitkeep
+
+#file
+
+implementation_plan.md
+walkthrough.md
+walkthrough1.md
+Kelompok 7_Laporan Proyek IoT_ Sistem Pemilahan Sampah Otomatis.docx.pdf
